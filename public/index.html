@@ -95,46 +95,31 @@
       </div>
 
       <div class="pixel-box-gold">
-        <h2 class="wizard-title">CONNECT GITHUB &amp; PICK REPO</h2>
+        <h2 class="wizard-title">SELECT REPOSITORY TO AUDIT</h2>
         <p class="wizard-subtitle">
           Gemini 4 Argon will load your repository into its 1M context window and cross-reference against the CVEProject/cvelistV5 datasource.
         </p>
 
-        <!-- Supabase GitHub OAuth Connect & Sign Out Row -->
-        <div class="auth-bar-row">
+        <!-- Shown ONLY when logged out: requires GitHub login before scanning -->
+        <div
+          id="step2-logged-out-notice"
+          style="margin-top: 12px; padding: 18px; background: var(--terminal-bg); border: 2px dashed var(--border-blue); text-align: center;"
+        >
+          <div style="font-family: var(--font-display); font-size: 0.72rem; color: var(--buzz-yellow); margin-bottom: 8px;">
+            🔒 SIGN IN REQUIRED TO SCAN REPOSITORIES
+          </div>
+          <div style="font-family: var(--font-code); font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">
+            Connect your GitHub account to select a repository, run 1M-context CVE audits, and open Pull Request patches.
+          </div>
           <button
             id="github-auth-btn"
             type="button"
             class="pixel-btn pixel-btn-github"
-            style="flex: 1;"
             onclick="window.buzzConnectGitHub()"
           >
-            <span id="github-auth-dot" class="led-dot warn"></span>
-            <span id="github-auth-label">SIGN IN WITH GITHUB (SUPABASE AUTH)</span>
+            <span class="led-dot warn"></span>
+            <span>SIGN IN WITH GITHUB (SUPABASE AUTH)</span>
           </button>
-
-          <button
-            id="github-signout-btn"
-            type="button"
-            class="pixel-btn pixel-btn-sm"
-            style="display: none; border-color: var(--sev-critical); color: var(--sev-critical);"
-            onclick="window.buzzSignOutGitHub()"
-          >
-            SIGN OUT
-          </button>
-        </div>
-
-        <!-- Shown when logged out: requires GitHub login before scanning -->
-        <div
-          id="step2-logged-out-notice"
-          style="margin-top: 18px; padding: 16px; background: var(--terminal-bg); border: 2px dashed var(--border-blue); text-align: center;"
-        >
-          <div style="font-family: var(--font-display); font-size: 0.72rem; color: var(--buzz-yellow); margin-bottom: 6px;">
-            🔒 SIGN IN REQUIRED TO SCAN REPOSITORIES
-          </div>
-          <div style="font-family: var(--font-code); font-size: 0.8rem; color: var(--text-muted);">
-            Connect your GitHub account above to select a repository, run 1M-context CVE audits, and open Pull Request patches.
-          </div>
         </div>
 
         <!-- Shown ONLY when signed in with GitHub -->
@@ -1306,31 +1291,20 @@
           }
         }
 
-        // 2. Update Step 2 Auth Button, Sign Out Button, and Authenticated Area visibility
-        const dot = document.getElementById('github-auth-dot');
-        const label = document.getElementById('github-auth-label');
-        const signOutBtn = document.getElementById('github-signout-btn');
+        // 2. Toggle Step 2 Authenticated Area vs Logged-Out Notice
         const authArea = document.getElementById('step2-authenticated-area');
         const loggedOutNotice = document.getElementById('step2-logged-out-notice');
         const savedAuditsSlot = document.getElementById('saved-audits-slot');
         const connectedReposSlot = document.getElementById('connected-repos-slot');
 
-        if (dot && label) {
-          if (isSignedIn) {
-            dot.className = 'led-dot';
-            label.textContent = '✓ SIGNED IN AS @' + displayHandle + ' (GITHUB OAUTH ACTIVE)';
-            if (signOutBtn) signOutBtn.style.display = 'inline-flex';
-            if (authArea) authArea.style.display = 'block';
-            if (loggedOutNotice) loggedOutNotice.style.display = 'none';
-          } else {
-            dot.className = 'led-dot warn';
-            label.textContent = 'SIGN IN WITH GITHUB (SUPABASE AUTH)';
-            if (signOutBtn) signOutBtn.style.display = 'none';
-            if (authArea) authArea.style.display = 'none';
-            if (loggedOutNotice) loggedOutNotice.style.display = 'block';
-            if (savedAuditsSlot) savedAuditsSlot.innerHTML = '';
-            if (connectedReposSlot) connectedReposSlot.innerHTML = '';
-          }
+        if (isSignedIn) {
+          if (authArea) authArea.style.display = 'block';
+          if (loggedOutNotice) loggedOutNotice.style.display = 'none';
+        } else {
+          if (authArea) authArea.style.display = 'none';
+          if (loggedOutNotice) loggedOutNotice.style.display = 'block';
+          if (savedAuditsSlot) savedAuditsSlot.innerHTML = '';
+          if (connectedReposSlot) connectedReposSlot.innerHTML = '';
         }
       }
 

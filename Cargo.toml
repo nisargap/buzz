@@ -1,0 +1,37 @@
+[package]
+name = "buzz"
+version = "0.1.0"
+edition = "2021"
+description = "Buzz — Pixel-art code auditing tool built on Gemini 4 Argon"
+
+[lib]
+name = "buzz"
+path = "src/lib.rs"
+
+[[bin]]
+name = "health"
+path = "api/health.rs"
+
+[[bin]]
+name = "auth_config"
+path = "api/auth_config.rs"
+
+[[bin]]
+name = "repos"
+path = "api/repos.rs"
+
+[[bin]]
+name = "cves"
+path = "api/cves.rs"
+
+[[bin]]
+name = "analyze"
+path = "api/analyze.rs"
+
+[dependencies]
+vercel_runtime = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+url = "2"

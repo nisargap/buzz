@@ -1753,7 +1753,7 @@ pub async fn run_buzz_codebase_chat_html(
         && !q_lower.contains("can you")
         && !q_lower.contains("how do");
 
-    // 2. Call fast Gemini Flash model with a strict 6.5s timeout so Vercel functions never time out
+    // 2. Ask Gemini, with per-model timeouts that keep the function inside its 60s limit
     let mut reply_text = String::new();
     let mut ask_confirm_reaudit = user_asked_reaudit;
     let mut suggest_pr_cve_ids: Vec<String> = Vec::new();
@@ -1775,58 +1775,84 @@ pub async fn run_buzz_codebase_chat_html(
             q = trimmed_q
         );
 
-        let fast_models = ["gemini-2.0-flash", "gemini-2.5-flash"];
+        // Configured model (Gemini 4 Argon) first, then a Flash fallback. Timeouts sum to 45s,
+        // inside the 60s Vercel maxDuration.
+        let mut chat_models: Vec<(&str, u64)> = vec![(config.gemini_model.as_str(), 28)];
+        if config.gemini_model != "gemini-2.5-flash" {
+            chat_models.push(("gemini-2.5-flash", 17));
+        }
 
         let payload = serde_json::json!({
             "contents": [{ "parts": [{ "text": prompt }] }],
             "generationConfig": {
                 "temperature": 0.2,
-                "maxOutputTokens": 650,
+                "maxOutputTokens": 2048,
                 "responseMimeType": "application/json"
             }
         });
 
-        for model_id in fast_models {
+        for (model_id, timeout_secs) in chat_models {
             let url = format!(
                 "{}/models/{}:generateContent?key={}",
                 config.gemini_api_base.trim_end_matches('/'),
                 model_id,
                 api_key
             );
-            if let Ok(resp) = client
+            let resp = match client
                 .post(&url)
                 .header("x-goog-api-key", api_key)
-                .timeout(std::time::Duration::from_secs(6))
+                .timeout(std::time::Duration::from_secs(timeout_secs))
                 .json(&payload)
                 .send()
                 .await
             {
-                if resp.status().is_success() {
-                    if let Ok(body) = resp.json::<serde_json::Value>().await {
-                        if let Some(raw_text) = body
-                            .pointer("/candidates/0/content/parts/0/text")
-                            .and_then(|v| v.as_str())
-                        {
-                            let cleaned = strip_markdown_fences(raw_text);
-                            if let Ok(parsed) =
-                                serde_json::from_str::<GeminiChatJsonOutput>(cleaned)
-                            {
-                                reply_text = parsed.reply;
-                                ask_confirm_reaudit =
-                                    ask_confirm_reaudit || parsed.ask_confirm_reaudit;
-                                suggest_pr_cve_ids = parsed.suggest_pr_cve_ids;
-                                execute_pr_now_cve_id = parsed.execute_pr_now_cve_id.filter(|s| {
-                                    !s.trim().is_empty() && s.trim() != "null"
-                                });
-                            } else {
-                                // Use the raw response directly rather than making another slow LLM call
-                                reply_text = cleaned.to_string();
-                            }
-                            break;
-                        }
-                    }
+                Ok(resp) => resp,
+                Err(err) => {
+                    eprintln!("[chat] {model_id} request failed: {err}");
+                    continue;
                 }
+            };
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                eprintln!(
+                    "[chat] {model_id} returned {status}: {}",
+                    body.chars().take(300).collect::<String>()
+                );
+                continue;
             }
+            let Ok(body) = resp.json::<serde_json::Value>().await else {
+                eprintln!("[chat] {model_id} returned a non-JSON body");
+                continue;
+            };
+            let Some(raw_text) = body
+                .pointer("/candidates/0/content/parts/0/text")
+                .and_then(|v| v.as_str())
+            else {
+                eprintln!(
+                    "[chat] {model_id} returned no text (finishReason: {})",
+                    body.pointer("/candidates/0/finishReason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("none")
+                );
+                continue;
+            };
+            let cleaned = strip_markdown_fences(raw_text);
+            if let Ok(parsed) = serde_json::from_str::<GeminiChatJsonOutput>(cleaned) {
+                reply_text = parsed.reply;
+                ask_confirm_reaudit = ask_confirm_reaudit || parsed.ask_confirm_reaudit;
+                suggest_pr_cve_ids = parsed.suggest_pr_cve_ids;
+                execute_pr_now_cve_id = parsed
+                    .execute_pr_now_cve_id
+                    .filter(|s| !s.trim().is_empty() && s.trim() != "null");
+            } else {
+                // Schema drifted (e.g. a null array) — salvage the `reply` field, else show the raw text
+                reply_text = serde_json::from_str::<serde_json::Value>(cleaned)
+                    .ok()
+                    .and_then(|v| v.get("reply").and_then(|r| r.as_str()).map(str::to_string))
+                    .unwrap_or_else(|| cleaned.to_string());
+            }
+            break;
         }
     }
 
@@ -1838,9 +1864,9 @@ pub async fn run_buzz_codebase_chat_html(
                 clean_repo
             );
         } else if let Some(rep) = &loaded_report {
+            // Don't pass the report summary off as an answer — say Gemini couldn't be reached
             reply_text = format!(
-                "{}\n\nI can also open a Pull Request for any of the {} findings in `{}`—click a Create PR action below or tell me which CVE/CWE to patch!",
-                rep.executive_summary,
+                "Sorry, I couldn't reach Gemini to answer that just now. Please try again in a moment.\n\nIn the meantime, I can still open a Pull Request for any of the {} findings in `{}`—click a Create PR action below or tell me which CVE/CWE to patch.",
                 rep.findings.len(),
                 clean_repo
             );
@@ -1849,7 +1875,7 @@ pub async fn run_buzz_codebase_chat_html(
             }
         } else {
             reply_text = format!(
-                "I have the report context for `{}` ready. Let me know which vulnerability or file you'd like to inspect or patch!",
+                "Sorry, I couldn't reach Gemini to answer that question about `{}` just now. Please try again in a moment.",
                 clean_repo
             );
         }
@@ -4267,5 +4293,32 @@ mod tests {
     fn test_strip_markdown_fences() {
         let fenced = "```json\n{\"risk_score\": 42}\n```";
         assert_eq!(strip_markdown_fences(fenced), "{\"risk_score\": 42}");
+    }
+
+    #[tokio::test]
+    async fn test_chat_does_not_echo_report_summary_when_gemini_fails() {
+        // Point Gemini at a closed local port so every model call fails immediately
+        let config = AppConfig {
+            supabase_url: None,
+            supabase_anon_key: None,
+            supabase_service_key: None,
+            gemini_api_key: Some("test-key".to_string()),
+            gemini_model: "gemini-4-argon".to_string(),
+            gemini_api_base: "http://127.0.0.1:9".to_string(),
+            github_fallback_token: None,
+        };
+        let report = r#"{"executive_summary":"SUMMARY_MARKER","findings":[]}"#;
+        let html = run_buzz_codebase_chat_html(
+            &Client::new(),
+            &config,
+            "nisargap/buzz",
+            None,
+            report,
+            "What language is this repo written in?",
+            None,
+        )
+        .await;
+        assert!(!html.contains("SUMMARY_MARKER"));
+        assert!(html.contains("couldn&#39;t reach Gemini") || html.contains("couldn't reach Gemini"));
     }
 }

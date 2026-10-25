@@ -1585,21 +1585,103 @@
       window.buzzSwitchReportTab = function (tabName) {
         const vulnsBtn = document.getElementById('tab-btn-vulns');
         const diagBtn = document.getElementById('tab-btn-diagram');
+        const chatBtn = document.getElementById('tab-btn-chat');
         const vulnsPane = document.getElementById('report-pane-vulns');
         const diagPane = document.getElementById('report-pane-diagram');
+        const chatPane = document.getElementById('report-pane-chat');
+
+        [vulnsBtn, diagBtn, chatBtn].forEach(function (b) {
+          if (b) b.classList.remove('active');
+        });
+        [vulnsPane, diagPane, chatPane].forEach(function (p) {
+          if (p) p.classList.remove('active');
+        });
 
         if (tabName === 'diagram') {
-          if (vulnsBtn) vulnsBtn.classList.remove('active');
           if (diagBtn) diagBtn.classList.add('active');
-          if (vulnsPane) vulnsPane.classList.remove('active');
           if (diagPane) diagPane.classList.add('active');
+        } else if (tabName === 'chat') {
+          if (chatBtn) chatBtn.classList.add('active');
+          if (chatPane) chatPane.classList.add('active');
+          const chatInput = document.getElementById('buzz-chat-input');
+          if (chatInput) chatInput.focus();
         } else {
           if (vulnsBtn) vulnsBtn.classList.add('active');
-          if (diagBtn) diagBtn.classList.remove('active');
           if (vulnsPane) vulnsPane.classList.add('active');
-          if (diagPane) diagPane.classList.remove('active');
         }
         persistActiveReportState();
+      };
+
+      window.buzzAskQuickPrompt = function (promptText) {
+        const chatInput = document.getElementById('buzz-chat-input');
+        const chatForm = document.getElementById('buzz-chat-form');
+        if (chatInput && chatForm) {
+          chatInput.value = promptText;
+          window.buzzSendChatMessage(chatForm, null);
+        }
+      };
+
+      window.buzzSendChatMessage = async function (formEl, evt) {
+        if (evt && evt.preventDefault) evt.preventDefault();
+        if (!formEl) return false;
+
+        const inputEl = document.getElementById('buzz-chat-input');
+        const submitBtn = document.getElementById('buzz-chat-submit-btn');
+        const messagesEl = document.getElementById('buzz-chat-messages');
+        const question = inputEl ? inputEl.value.trim() : '';
+        if (!question) return false;
+
+        const formData = new FormData(formEl);
+        const params = new URLSearchParams();
+        formData.forEach(function (val, key) {
+          params.append(key, String(val));
+        });
+
+        if (inputEl) inputEl.value = '';
+        if (submitBtn) submitBtn.disabled = true;
+
+        // Show temporary thinking indicator bubble
+        const thinkingEl = document.createElement('div');
+        thinkingEl.className = 'buzz-chat-msg assistant';
+        thinkingEl.innerHTML =
+          '<div class="buzz-msg-sender">⚡ BUZZ (GEMINI 4 ARGON)</div><div class="buzz-msg-body" style="color:var(--buzz-yellow);">Analyzing report &amp; repository files...</div>';
+        if (messagesEl) {
+          messagesEl.appendChild(thinkingEl);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        try {
+          const headers = getAuthHeaders();
+          headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+
+          const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: headers,
+            body: params.toString()
+          });
+
+          const html = await res.text();
+          if (thinkingEl && thinkingEl.parentNode) {
+            thinkingEl.parentNode.removeChild(thinkingEl);
+          }
+          if (messagesEl && html) {
+            const wrapper = document.createElement('div');
+            wrapper.style.display = 'contents';
+            wrapper.innerHTML = html;
+            messagesEl.appendChild(wrapper);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            persistActiveReportState();
+          }
+        } catch (_) {
+          if (thinkingEl) {
+            thinkingEl.innerHTML =
+              '<div class="buzz-msg-sender">⚡ BUZZ</div><div class="buzz-msg-body" style="color:var(--sev-critical);">Could not reach Buzz chat endpoint. Please try again.</div>';
+          }
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
+          if (inputEl) inputEl.focus();
+        }
+        return false;
       };
 
       window.buzzFinishAnalysisPage = function (event) {

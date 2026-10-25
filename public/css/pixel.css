@@ -1716,3 +1716,98 @@ body::before {
   border-color: var(--buzz-yellow);
   color: var(--buzz-yellow);
 }
+
+/* ==========================================================================
+   TALK TO BUZZ CODEBASE CHAT TAB
+   ========================================================================== */
+
+.buzz-chat-card {
+  padding: 22px;
+  border-color: var(--buzz-yellow);
+  font-family: var(--font-code);
+}
+
+.buzz-chat-header {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 2px dashed var(--border-blue);
+}
+
+.buzz-chat-avatar {
+  width: 48px;
+  height: 48px;
+  image-rendering: pixelated;
+  animation: pixel-float 1.6s steps(4, end) infinite;
+}
+
+.buzz-chat-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.buzz-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--terminal-bg);
+  border: 3px solid var(--border-blue);
+  margin-bottom: 14px;
+}
+
+.buzz-chat-msg {
+  padding: 12px 14px;
+  border: 2px solid var(--border-blue);
+  background: #0b132b;
+  text-align: left;
+}
+
+.buzz-chat-msg.user {
+  border-color: var(--buzz-cyan);
+  background: #0a1936;
+  align-self: flex-end;
+  width: 88%;
+}
+
+.buzz-chat-msg.assistant {
+  border-color: var(--buzz-yellow);
+  background: #10162e;
+  align-self: flex-start;
+  width: 94%;
+}
+
+.buzz-msg-sender {
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  color: var(--buzz-yellow);
+  margin-bottom: 6px;
+}
+
+.buzz-chat-msg.user .buzz-msg-sender {
+  color: var(--buzz-cyan);
+}
+
+.buzz-msg-body {
+  font-family: var(--font-code);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-main);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.buzz-chat-form {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+@media (max-width: 680px) {
+  .buzz-chat-form {
+    flex-direction: column;
+  }
+}

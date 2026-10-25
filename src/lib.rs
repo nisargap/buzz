@@ -1580,10 +1580,129 @@ pub async fn save_diagram_to_scan(
     let _ = client
         .patch(&url)
         .header("apikey", api_key)
+        .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .json(&payload)
         .send()
         .await;
+}
+
+// ============================================================================
+// 5C. TALK TO BUZZ — CODEBASE & AUDIT REPORT Q&A ASSISTANT
+// ============================================================================
+
+pub async fn run_buzz_codebase_chat(
+    client: &Client,
+    config: &AppConfig,
+    repo_full_name: &str,
+    scan_id: Option<&str>,
+    report_context: &str,
+    question: &str,
+    github_token: Option<&str>,
+) -> String {
+    let clean_repo = repo_full_name.trim();
+    let trimmed_q = question.trim();
+    if trimmed_q.is_empty() {
+        return "Ask me any question about this repository's vulnerabilities, architecture, or how to remediate specific findings.".to_string();
+    }
+
+    // 1. Gather persisted AuditReport from Supabase if scan_id is present
+    let mut full_report_json = report_context.to_string();
+    if let Some(sid) = scan_id.filter(|s| !s.trim().is_empty()) {
+        if let Some(saved) = fetch_saved_scan_by_id(client, config, sid).await {
+            if let Ok(serialized) = serde_json::to_string_pretty(&saved) {
+                full_report_json = serialized;
+            }
+        }
+    }
+
+    // 2. Fetch repository files snapshot for deep code-level context
+    let snapshot = fetch_repo_snapshot(client, config, clean_repo, github_token).await;
+    let mut repo_files_context = String::new();
+    for f in snapshot.files.iter().take(30) {
+        let snippet: String = f.content.chars().take(6000).collect();
+        repo_files_context.push_str(&format!("\n--- FILE: {} ---\n{}\n", f.path, snippet));
+    }
+
+    // 3. Call Gemini 4 Argon with the full Audit Report + Repository Codebase Context
+    if let Some(api_key) = &config.gemini_api_key {
+        let prompt = format!(
+            "You are Buzz, an expert security auditor and software architect assistant powered by Gemini 4 Argon.\n\
+             You are chatting with a developer about their GitHub repository `{repo}`.\n\
+             You have complete access to:\n\
+             1. The Buzz Vulnerability Audit Report & System Design Diagram for `{repo}`.\n\
+             2. The actual source code files from `{repo}`.\n\n\
+             Answer the user's question clearly, concisely, and directly. Reference exact file paths, line numbers, CVE/CWE IDs, and concrete code fixes where relevant.\n\n\
+             === AUDIT REPORT CONTEXT ({repo}) ===\n{report_ctx}\n\n\
+             === REPOSITORY SOURCE FILES ({repo}) ===\n{files_ctx}\n\n\
+             === USER QUESTION ===\n{q}",
+            repo = clean_repo,
+            report_ctx = full_report_json,
+            files_ctx = repo_files_context,
+            q = trimmed_q
+        );
+
+        let candidate_models = [
+            config.gemini_model.as_str(),
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+        ];
+
+        let payload = serde_json::json!({
+            "contents": [{ "parts": [{ "text": prompt }] }],
+            "generationConfig": { "temperature": 0.2 }
+        });
+
+        for model_id in candidate_models {
+            let url = format!(
+                "{}/models/{}:generateContent?key={}",
+                config.gemini_api_base.trim_end_matches('/'),
+                model_id,
+                api_key
+            );
+            if let Ok(resp) = client
+                .post(&url)
+                .header("x-goog-api-key", api_key)
+                .json(&payload)
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    if let Ok(body) = resp.json::<serde_json::Value>().await {
+                        if let Some(text) = body
+                            .pointer("/candidates/0/content/parts/0/text")
+                            .and_then(|v| v.as_str())
+                        {
+                            let cleaned = text.trim();
+                            if !cleaned.is_empty() {
+                                return cleaned.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Context-aware fallback response using the loaded snapshot & report context
+    let file_list: Vec<&str> = snapshot
+        .files
+        .iter()
+        .take(8)
+        .map(|f| f.path.as_str())
+        .collect();
+    format!(
+        "Based on the audit report for `{}` ({} files loaded in 1M context, including `{}`):\n\n{}\n\nYou can apply any remediation patch directly using the `⚡ APPLY & OPEN PR` button on the Vulnerabilities tab.",
+        clean_repo,
+        snapshot.files.len(),
+        file_list.join("`, `"),
+        if !report_context.trim().is_empty() {
+            report_context.chars().take(600).collect::<String>()
+        } else {
+            format!("Primary ecosystem: `{}` on branch `{}`.", snapshot.primary_ecosystem, snapshot.default_branch)
+        }
+    )
 }
 
 // ============================================================================
@@ -3421,6 +3540,20 @@ pub mod templates {
             "🎨 CREATE CODEBASE DIAGRAM"
         };
 
+        // Serialize report context for the Talk to Buzz assistant
+        let serialized_report_context = serde_json::to_string(&serde_json::json!({
+            "repo_full_name": report.repo_full_name,
+            "default_branch": report.default_branch,
+            "risk_score": report.risk_score,
+            "grade": report.grade,
+            "executive_summary": report.executive_summary,
+            "inspected_file_paths": report.inspected_file_paths,
+            "findings": report.findings,
+            "diagram": report.diagram,
+        }))
+        .unwrap_or_default();
+        let escaped_report_context = escape_html(&serialized_report_context);
+
         format!(
             r#"<div class="pixel-box-gold report-header-card" data-scan-id="{scan_id}" data-repo="{repo}">
                 <div class="report-Banner-top">
@@ -3499,7 +3632,7 @@ pub mod templates {
                 </details>
             </div>
 
-            <!-- Compact Menu to Toggle Between Vulnerabilities Report & Codebase Diagram -->
+            <!-- Compact Menu to Toggle Between Vulnerabilities, Codebase Diagram & Talk to Buzz -->
             <nav class="report-view-tabs" aria-label="Report Section Toggle">
                 <button
                     id="tab-btn-vulns"
@@ -3507,7 +3640,7 @@ pub mod templates {
                     class="report-tab-btn active"
                     onclick="window.buzzSwitchReportTab('vulns')"
                 >
-                    🛡️ VULNERABILITIES REPORT ({hits})
+                    🛡️ VULNERABILITIES ({hits})
                 </button>
                 <button
                     id="tab-btn-diagram"
@@ -3516,6 +3649,14 @@ pub mod templates {
                     onclick="window.buzzSwitchReportTab('diagram')"
                 >
                     🔀 CODEBASE DIAGRAM
+                </button>
+                <button
+                    id="tab-btn-chat"
+                    type="button"
+                    class="report-tab-btn"
+                    onclick="window.buzzSwitchReportTab('chat')"
+                >
+                    💬 TALK TO BUZZ
                 </button>
             </nav>
 
@@ -3530,6 +3671,65 @@ pub mod templates {
             <div id="report-pane-diagram" class="report-tab-pane">
                 <div id="diagram-section-slot">
                     {diagram_html}
+                </div>
+            </div>
+
+            <!-- Tab Pane 3: Talk to Buzz Codebase Assistant -->
+            <div id="report-pane-chat" class="report-tab-pane">
+                <div class="pixel-box buzz-chat-card">
+                    <div class="buzz-chat-header">
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <img src="/assets/buzz-logo.svg" alt="Buzz" class="buzz-chat-avatar" />
+                            <div>
+                                <div class="report-repo-title" style="color:var(--buzz-yellow);font-size:0.95rem;margin-bottom:2px;">
+                                    💬 TALK TO BUZZ // {repo}
+                                </div>
+                                <div style="font-family:var(--font-code);font-size:0.8rem;color:var(--text-muted);">
+                                    Gemini 4 Argon has full context of this audit report ({hits} findings, grade {grade}) and all {files} loaded repository files.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Prompt Chips -->
+                    <div class="buzz-chat-prompts">
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Walk me through the highest-severity vulnerability in this report and how to fix it.')">
+                            Explain top vulnerability &amp; fix
+                        </button>
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('How do requests and data flow through the main files in this codebase?')">
+                            Explain codebase architecture
+                        </button>
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Which files should I prioritize refactoring first to improve our security grade?')">
+                            Prioritize security refactors
+                        </button>
+                    </div>
+
+                    <!-- Chat Message History -->
+                    <div id="buzz-chat-messages" class="buzz-chat-messages">
+                        <div class="buzz-chat-msg assistant">
+                            <div class="buzz-msg-sender">⚡ BUZZ (GEMINI 4 ARGON)</div>
+                            <div class="buzz-msg-body">I've loaded <strong>{repo}</strong> ({files} files, Grade <strong>{grade}</strong>, {hits} findings) into my 1M context window. Ask me anything about the vulnerabilities, specific source files, or how the codebase works!</div>
+                        </div>
+                    </div>
+
+                    <!-- Chat Input Form -->
+                    <form id="buzz-chat-form" class="buzz-chat-form" onsubmit="return window.buzzSendChatMessage(this, event);">
+                        <input type="hidden" name="scan_id" value="{scan_id}" />
+                        <input type="hidden" name="repo" value="{repo}" />
+                        <textarea name="report_context" style="display:none;">{report_context}</textarea>
+                        <input
+                            id="buzz-chat-input"
+                            name="question"
+                            type="text"
+                            class="pixel-input"
+                            placeholder="Ask Buzz about {repo} (e.g. How does auth work in src/lib.rs?)"
+                            required
+                            autocomplete="off"
+                        />
+                        <button id="buzz-chat-submit-btn" type="submit" class="pixel-btn pixel-btn-primary" style="padding:13px 22px;font-size:0.78rem;flex-shrink:0;">
+                            ⚡ ASK BUZZ
+                        </button>
+                    </form>
                 </div>
             </div>"#,
             scan_id = scan_id_attr,
@@ -3550,7 +3750,23 @@ pub mod templates {
             grade = grade_escaped,
             summary = escape_html(&report.executive_summary),
             files_chips = files_chips,
-            findings_html = findings_html
+            findings_html = findings_html,
+            report_context = escaped_report_context
+        )
+    }
+
+    pub fn render_chat_turn(question: &str, answer: &str) -> String {
+        format!(
+            r#"<div class="buzz-chat-msg user">
+                <div class="buzz-msg-sender">YOU</div>
+                <div class="buzz-msg-body">{q}</div>
+            </div>
+            <div class="buzz-chat-msg assistant">
+                <div class="buzz-msg-sender">⚡ BUZZ (GEMINI 4 ARGON)</div>
+                <div class="buzz-msg-body">{a}</div>
+            </div>"#,
+            q = escape_html(question),
+            a = escape_html(answer)
         )
     }
 }

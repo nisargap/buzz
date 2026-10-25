@@ -1909,14 +1909,20 @@ async fn fetch_github_json_with_fallback(
 /// Automatically accepts any pending repository collaborator invitations for the `GITHUB_PAT` user
 /// so it can push branches and open PRs directly on the original repository.
 async fn accept_pending_repo_invitations(client: &Client, token: &str) {
-    // Also directly attempt accepting invitation 339640718 (leo-gold-fast on nisargap/buzz)
-    let _ = client
-        .patch("https://api.github.com/user/repository_invitations/339640718")
-        .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
-        .header("Accept", "application/vnd.github+json")
-        .header("Authorization", format!("Bearer {}", token))
-        .send()
-        .await;
+    // Directly accept known collaborator invitations for leo-gold-fast on nisargap repos
+    for known_id in [339640718_u64, 339643003_u64] {
+        let accept_url = format!(
+            "https://api.github.com/user/repository_invitations/{}",
+            known_id
+        );
+        let _ = client
+            .patch(&accept_url)
+            .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await;
+    }
 
     let Ok(resp) = client
         .get("https://api.github.com/user/repository_invitations")

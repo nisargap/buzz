@@ -479,97 +479,171 @@
     </section>
 
     <!-- ================================================================== -->
-    <!-- WIZARD PAGE 5: REVIEW-FIRST AUTO-REFACTOR                          -->
+    <!-- WIZARD PAGE 5: GUIDED AUTO-REFACTOR                                -->
     <!-- ================================================================== -->
     <section id="wizard-step-5" class="wizard-step wizard-step-wide" aria-labelledby="refactor-heading">
       <div class="wizard-top-nav">
-        <button id="refactor-back-btn" type="button" class="pixel-btn pixel-btn-sm">BACK TO REPO</button>
-        <span class="step-badge">AUTO-REFACTOR // REVIEW FIRST</span>
+        <button id="refactor-back-btn" type="button" class="pixel-btn pixel-btn-sm">BACK TO REPOS</button>
+        <div class="refactor-repo-row">
+          <span class="refactor-repo-caption">CURRENT REPOSITORY</span>
+          <strong id="refactor-repo" class="refactor-repo-label"></strong>
+        </div>
       </div>
 
       <div class="pixel-box-gold refactor-panel">
-        <h2 id="refactor-heading" class="wizard-title" tabindex="-1">A SMALL CHANGE. YOUR REVIEW.</h2>
-        <p class="wizard-subtitle">
-          Select a narrow scope, provide Markdown rules, and review Gemini's suggestion. Nothing is published without your approval.
-        </p>
-        <div class="refactor-repo-row">
-          <div>
-            <span class="refactor-label">CURRENT REPOSITORY</span>
-            <strong id="refactor-repo" class="refactor-repo-label"></strong>
+        <header class="refactor-header">
+          <h2 id="refactor-heading" class="refactor-heading" tabindex="-1">Auto-Refactor</h2>
+          <ol class="refactor-progress" aria-label="Refactor progress">
+            <li id="refactor-progress-goal" class="is-current" aria-current="step"><span>01</span> Goal</li>
+            <li id="refactor-progress-scope"><span>02</span> Scope</li>
+            <li id="refactor-progress-review"><span>03</span> Review</li>
+            <li id="refactor-progress-publish"><span>04</span> Draft</li>
+          </ol>
+          <p id="refactor-status" class="refactor-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <button id="refactor-load-btn" type="button" class="pixel-btn pixel-btn-sm" hidden>TRY LOADING AGAIN</button>
+        </header>
+
+        <section id="refactor-goal-stage" class="refactor-stage" aria-labelledby="refactor-goal-heading">
+          <h3 id="refactor-goal-heading" class="refactor-stage-title" tabindex="-1">What should we simplify?</h3>
+          <p class="refactor-stage-copy">Choose a direction. Buzz will pick a starting point. No writing needed.</p>
+          <div class="refactor-goals" role="group" aria-labelledby="refactor-goal-heading">
+            <button id="refactor-goal-cleanup" type="button" class="refactor-goal-card" aria-pressed="true">
+              <span class="refactor-goal-title">Balanced cleanup</span>
+              <span class="refactor-goal-description">A little less repetition and nesting. Keep the same behavior.</span>
+              <span class="refactor-goal-badge">Recommended</span>
+            </button>
+            <button id="refactor-goal-boilerplate" type="button" class="refactor-goal-card" aria-pressed="false">
+              <span class="refactor-goal-title">Less boilerplate</span>
+              <span class="refactor-goal-description">Trim repeated setup and busywork without adding complexity.</span>
+            </button>
+            <button id="refactor-goal-nesting" type="button" class="refactor-goal-card" aria-pressed="false">
+              <span class="refactor-goal-title">Flatter logic</span>
+              <span class="refactor-goal-description">Untangle nested conditions so the flow is easier to follow.</span>
+            </button>
           </div>
-          <button id="refactor-load-btn" type="button" class="pixel-btn pixel-btn-sm">LOAD FILE LIST</button>
-        </div>
-        <p id="refactor-base" class="refactor-help"></p>
-        <p class="refactor-help">Repository and login come from Buzz's existing repo picker. Go back to change either.</p>
-        <p id="refactor-status" class="refactor-status" role="status" aria-live="polite" aria-atomic="true"></p>
-
-        <fieldset id="refactor-settings" class="refactor-settings">
-          <label for="refactor-rules" class="refactor-label">MARKDOWN REFACTOR RULES</label>
-          <p id="refactor-rules-help" class="refactor-help">Repository rules, when available, load here for review. Edits stay in this page's memory only.</p>
-          <textarea id="refactor-rules" class="pixel-input refactor-textarea" rows="7" aria-describedby="refactor-rules-help" placeholder="Describe behavior to preserve, conventions to follow, and changes to avoid."></textarea>
-
-          <div class="refactor-scope">
-            <div>
-              <label for="refactor-max-files" class="refactor-label">MAX EDITABLE FILES (1–5)</label>
-              <input id="refactor-max-files" class="pixel-input" type="number" min="1" max="5" step="1" value="3" required />
-            </div>
-            <div>
-              <label for="refactor-max-lines" class="refactor-label">MAX CHANGED LINES (1–500)</label>
-              <input id="refactor-max-lines" class="pixel-input" type="number" min="1" max="500" step="1" value="100" required />
-            </div>
-          </div>
-
-          <p id="refactor-file-notice" class="refactor-help">Load the file list to select editable source files and optional read-only context.</p>
-          <div class="refactor-file-selectors">
-            <fieldset class="refactor-file-group">
-              <legend>EDITABLE SOURCE FILES</legend>
-              <p id="refactor-selected-count" class="refactor-help">0 selected</p>
-              <div id="refactor-files" class="refactor-file-list"></div>
-            </fieldset>
-            <fieldset class="refactor-file-group">
-              <legend>READ-ONLY CONTEXT (OPTIONAL)</legend>
-              <p id="refactor-context-count" class="refactor-help">0 / 3 selected; never edited</p>
-              <div id="refactor-context-files" class="refactor-file-list"></div>
-            </fieldset>
-          </div>
-
-          <label for="refactor-feedback" class="refactor-label">FEEDBACK FOR THE NEXT GENERATION (OPTIONAL)</label>
-          <textarea id="refactor-feedback" class="pixel-input refactor-textarea" rows="3" placeholder="Explain what to keep or improve when generating again."></textarea>
-          <label class="refactor-check">
-            <input id="refactor-consent" type="checkbox" />
-            <span>I consent to sending only the selected source and read-only context, rules, and feedback to Gemini. Repository guidance such as AGENTS.md is sent only if I select it. I have reviewed the selection for sensitive information.</span>
-          </label>
           <div class="refactor-actions">
-            <button id="refactor-generate-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>GENERATE PROPOSAL</button>
+            <button id="refactor-goal-next-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>CONTINUE</button>
           </div>
-        </fieldset>
-      </div>
+        </section>
 
-      <section id="refactor-review" class="pixel-box refactor-review" aria-labelledby="refactor-review-heading" hidden>
-        <h2 id="refactor-review-heading" class="wizard-title" tabindex="-1">REVIEW THE PROPOSAL</h2>
-        <p class="refactor-warning">UNVERIFIED — tests have not run; draft PR only</p>
-        <p id="refactor-proposal-base" class="refactor-help"></p>
-        <dl class="refactor-summary">
-          <dt>SUMMARY</dt><dd id="refactor-summary"></dd>
-          <dt>RULE FOLLOWED</dt><dd id="refactor-rule"></dd>
-          <dt>TRADEOFFS</dt><dd id="refactor-tradeoffs"></dd>
-        </dl>
-        <p id="refactor-no-changes" class="refactor-help" hidden>No worthwhile change was proposed. No draft PR can be opened.</p>
-        <p id="refactor-changed-lines" class="refactor-count" aria-live="polite"></p>
-        <div id="refactor-edits"></div>
-        <div class="refactor-actions">
-          <button id="refactor-regenerate-btn" type="button" class="pixel-btn">REGENERATE WITH FEEDBACK</button>
-          <button id="refactor-reject-btn" type="button" class="pixel-btn">REJECT / RESET PROPOSAL</button>
-        </div>
-        <div id="refactor-publish-controls" hidden>
-          <label class="refactor-check">
-            <input id="refactor-approve" type="checkbox" />
-            <span>I reviewed every replacement and approve opening an unverified draft PR. Tests have not run. Editing code clears this approval.</span>
-          </label>
-          <button id="refactor-publish-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>OPEN DRAFT PR</button>
-        </div>
-        <div id="refactor-published" class="refactor-published" hidden></div>
-      </section>
+        <section id="refactor-scope-stage" class="refactor-stage" aria-labelledby="refactor-scope-heading" hidden>
+          <h3 id="refactor-scope-heading" class="refactor-stage-title" tabindex="-1">Start small. Keep behavior.</h3>
+          <p class="refactor-stage-copy">Buzz picked a manageable starting point. Nothing changes until you review it.</p>
+          <div class="refactor-scope-preview">
+            <p id="refactor-goal-summary" class="refactor-goal-summary"></p>
+            <ul id="refactor-suggested-files" class="refactor-suggested-files"></ul>
+            <p id="refactor-scope-summary" class="refactor-help">Read-only context: none.</p>
+            <p id="refactor-base" class="refactor-help refactor-base"></p>
+          </div>
+          <p class="refactor-help">Suggested from file size and location, not evidence of complexity.</p>
+          <div id="refactor-revision-note" hidden>
+            <span class="refactor-label">FEEDBACK FOR THIS REVISION</span>
+            <p id="refactor-revision-feedback" class="refactor-help"></p>
+            <button id="refactor-clear-feedback-btn" type="button" class="pixel-btn pixel-btn-sm">REMOVE FEEDBACK</button>
+          </div>
+
+          <details id="refactor-advanced" class="refactor-advanced">
+            <summary>Customize (optional)</summary>
+            <fieldset id="refactor-settings" class="refactor-settings" aria-label="Optional refactor settings">
+              <label for="refactor-rules" class="refactor-label">RULES</label>
+              <p id="refactor-rules-help" class="refactor-help">Defaults are ready to use. Edit only if you want extra guidance.</p>
+              <textarea id="refactor-rules" class="pixel-input refactor-textarea" rows="4" aria-describedby="refactor-rules-help" placeholder="Keep behavior and public interfaces unchanged."></textarea>
+
+              <div class="refactor-scope">
+                <div>
+                  <label for="refactor-max-files" class="refactor-label">MAX EDITABLE FILES (1–5)</label>
+                  <input id="refactor-max-files" class="pixel-input" type="number" min="1" max="5" step="1" value="1" />
+                </div>
+                <div>
+                  <label for="refactor-max-lines" class="refactor-label">MAX CHANGED LINES (1–500)</label>
+                  <input id="refactor-max-lines" class="pixel-input" type="number" min="1" max="500" step="1" value="100" />
+                </div>
+              </div>
+
+              <p id="refactor-file-notice" class="refactor-help">Only selected source files can change. Read-only context is never edited.</p>
+              <div class="refactor-file-selectors">
+                <fieldset class="refactor-file-group">
+                  <legend>EDITABLE SOURCE FILES</legend>
+                  <p id="refactor-selected-count" class="refactor-help">0 selected</p>
+                  <div id="refactor-files" class="refactor-file-list"></div>
+                </fieldset>
+                <fieldset class="refactor-file-group">
+                  <legend>READ-ONLY CONTEXT (OPTIONAL)</legend>
+                  <p id="refactor-context-count" class="refactor-help">0 / 3 selected; never edited</p>
+                  <p class="refactor-help">No context is added automatically. Choose up to 3 files if useful.</p>
+                  <div id="refactor-context-files" class="refactor-file-list"></div>
+                </fieldset>
+              </div>
+            </fieldset>
+          </details>
+
+          <p id="refactor-sharing-note" class="refactor-help refactor-sharing-note">Continue sends only the listed source/context, your rules, goal, and any revision feedback to Gemini. Check these files for sensitive information. Nothing is committed.</p>
+          <div class="refactor-actions">
+            <button id="refactor-generate-btn" type="button" class="pixel-btn pixel-btn-primary" aria-describedby="refactor-sharing-note" disabled>USE THIS SCOPE &amp; GENERATE</button>
+            <button id="refactor-scope-back-btn" type="button" class="pixel-btn">BACK</button>
+          </div>
+        </section>
+
+        <section id="refactor-working-stage" class="refactor-stage refactor-working" aria-labelledby="refactor-working-heading" hidden>
+          <div class="refactor-loader" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <h3 id="refactor-working-heading" class="refactor-stage-title" tabindex="-1">Preparing your proposal.</h3>
+          <p id="refactor-working-message" class="refactor-stage-copy">Gemini is preparing a proposal from the scope you approved.</p>
+          <p class="refactor-help">Generating a proposal does not edit source files or run tests.</p>
+          <div class="refactor-actions">
+            <button id="refactor-cancel-btn" type="button" class="pixel-btn">CANCEL &amp; GO BACK</button>
+          </div>
+        </section>
+
+        <section id="refactor-review" class="refactor-stage refactor-review" aria-labelledby="refactor-review-heading" hidden>
+          <h3 id="refactor-review-heading" class="refactor-stage-title" tabindex="-1">Worth keeping?</h3>
+          <p class="refactor-warning"><strong>UNVERIFIED</strong> — tests have not run. Review the code before continuing.</p>
+          <p id="refactor-proposal-base" class="refactor-help refactor-base"></p>
+          <dl class="refactor-summary">
+            <dt>SUMMARY</dt><dd id="refactor-summary"></dd>
+            <dt>RULE FOLLOWED</dt><dd id="refactor-rule"></dd>
+            <dt>TRADEOFFS</dt><dd id="refactor-tradeoffs"></dd>
+          </dl>
+          <p id="refactor-no-changes" class="refactor-help" hidden>No worthwhile change was proposed. No draft PR can be opened.</p>
+          <p id="refactor-changed-lines" class="refactor-count" aria-live="polite"></p>
+          <div id="refactor-edits"></div>
+          <div class="refactor-tweak-actions">
+            <button id="refactor-smaller-btn" type="button" class="pixel-btn pixel-btn-sm">TRY A SMALLER CHANGE</button>
+            <button id="refactor-inline-btn" type="button" class="pixel-btn pixel-btn-sm">AVOID NEW HELPERS</button>
+          </div>
+          <details id="refactor-feedback-options" class="refactor-advanced refactor-feedback-options">
+            <summary>Add feedback (optional)</summary>
+            <div class="refactor-feedback-body">
+              <label for="refactor-feedback" class="refactor-label">WHAT WOULD YOU CHANGE?</label>
+              <textarea id="refactor-feedback" class="pixel-input refactor-textarea" rows="3" placeholder="Tell Buzz what to keep or improve."></textarea>
+              <button id="refactor-regenerate-btn" type="button" class="pixel-btn pixel-btn-sm">TRY AGAIN WITH FEEDBACK</button>
+            </div>
+          </details>
+          <div class="refactor-actions">
+            <button id="refactor-review-next-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>LOOKS GOOD — CONTINUE</button>
+            <button id="refactor-reject-btn" type="button" class="pixel-btn">DISCARD</button>
+          </div>
+        </section>
+
+        <section id="refactor-publish-stage" class="refactor-stage" aria-labelledby="refactor-publish-heading" hidden>
+          <h3 id="refactor-publish-heading" class="refactor-stage-title" tabindex="-1">Ready for a draft PR?</h3>
+          <p id="refactor-publish-summary" class="refactor-stage-copy"></p>
+          <ul id="refactor-publish-files" class="refactor-publish-files"></ul>
+          <p class="refactor-warning">This opens an unverified draft on a new branch only. Tests have not run. Buzz never merges changes.</p>
+          <div class="refactor-actions">
+            <button id="refactor-publish-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>APPROVE &amp; OPEN DRAFT PR</button>
+            <button id="refactor-review-back-btn" type="button" class="pixel-btn">BACK TO REVIEW</button>
+          </div>
+        </section>
+
+        <section id="refactor-done-stage" class="refactor-stage" aria-labelledby="refactor-done-heading" hidden>
+          <h3 id="refactor-done-heading" class="refactor-stage-title" tabindex="-1">Draft ready for your team.</h3>
+          <div id="refactor-published" class="refactor-published"></div>
+          <p class="refactor-help">Run CI and get a human review before merging. Buzz never merges automatically.</p>
+          <div class="refactor-actions">
+            <button id="refactor-new-btn" type="button" class="pixel-btn pixel-btn-primary">START ANOTHER</button>
+          </div>
+        </section>
+      </div>
     </section>
 
     <!-- ================================================================== -->

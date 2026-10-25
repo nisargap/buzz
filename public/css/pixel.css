@@ -919,3 +919,129 @@ body::before {
   font-size: 0.62rem;
   padding: 7px 12px;
 }
+
+/* ==========================================================================
+   BOUNCING PIXEL LIGHTNING BOLT CODING ON A LAPTOP OVERLAY
+   ========================================================================== */
+
+.patch-coding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(3, 5, 14, 0.84);
+  backdrop-filter: blur(2px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.patch-coding-overlay.active {
+  display: flex;
+  animation: step-appear 0.14s steps(2, end);
+}
+
+.patch-coding-modal {
+  width: 100%;
+  max-width: 480px;
+  background: var(--panel-bg);
+  border: 4px solid var(--buzz-yellow);
+  box-shadow:
+    0 0 0 4px var(--border-dark),
+    10px 10px 0 0 var(--border-dark),
+    0 0 36px rgba(255, 224, 71, 0.25);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+
+.bolt-laptop-stage {
+  width: 220px;
+  height: 190px;
+  background: radial-gradient(circle at 50% 55%, rgba(72, 209, 255, 0.22), rgba(5, 8, 19, 0) 72%);
+  border: 3px dashed var(--border-blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bolt-laptop-scene-svg {
+  width: 192px;
+  height: 168px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.75));
+}
+
+/* Energetic Pixel Bounce for the Lightning Bolt Coder */
+.bolt-coder-bouncer {
+  animation: bolt-coder-bounce 0.28s steps(2, end) infinite;
+}
+
+@keyframes bolt-coder-bounce {
+  0%, 100% { transform: translateY(0px); }
+  50%      { transform: translateY(-2px); }
+}
+
+/* Rapid alternating typing hands */
+.coder-hand-left {
+  animation: hand-tap-left 0.16s steps(2, end) infinite;
+}
+
+.coder-hand-right {
+  animation: hand-tap-right 0.16s steps(2, end) infinite;
+}
+
+@keyframes hand-tap-left {
+  0%, 100% { transform: translateY(0px); }
+  50%      { transform: translateY(1px); }
+}
+
+@keyframes hand-tap-right {
+  0%, 100% { transform: translateY(1px); }
+  50%      { transform: translateY(0px); }
+}
+
+/* Floating pixel code particles rising from laptop screen */
+.code-particle-1 {
+  animation: code-rise-1 0.9s steps(4, end) infinite;
+}
+
+.code-particle-2 {
+  animation: code-rise-2 1.1s steps(4, end) infinite;
+}
+
+.code-particle-3 {
+  animation: code-rise-3 0.75s steps(4, end) infinite;
+}
+
+@keyframes code-rise-1 {
+  0%   { transform: translate(0px, 0px); opacity: 1; }
+  100% { transform: translate(-2px, -6px); opacity: 0; }
+}
+
+@keyframes code-rise-2 {
+  0%   { transform: translate(0px, 0px); opacity: 1; }
+  100% { transform: translate(2px, -7px); opacity: 0; }
+}
+
+@keyframes code-rise-3 {
+  0%   { transform: translate(0px, 0px); opacity: 1; }
+  100% { transform: translate(0px, -5px); opacity: 0; }
+}
+
+.patch-coding-title {
+  font-family: var(--font-display);
+  font-size: 0.88rem;
+  color: var(--buzz-yellow);
+  line-height: 1.5;
+}
+
+.patch-coding-step {
+  font-family: var(--font-code);
+  font-size: 0.82rem;
+  color: var(--buzz-cyan);
+  min-height: 1.4em;
+}

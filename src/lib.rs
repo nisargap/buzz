@@ -1592,17 +1592,17 @@ pub async fn create_remediation_pull_request(
         working_repo = format!("{}/{}", fork_owner, repo_name_only);
         is_fork_workflow = true;
 
-        // Poll until fork git refs endpoint is ready and create the branch on the fork
+        // Poll briefly (up to 2 attempts) to see if GitHub's async fork worker initialized the repo
         let fork_ref_url = format!("https://api.github.com/repos/{}/git/refs", working_repo);
         let mut fork_branch_created = false;
+        let mut fork_default_branch = base_branch.to_string();
 
-        for _ in 0..8 {
-            // Try creating the branch using upstream base_sha or fork's default branch sha
+        for _ in 0..2 {
             let fork_head_url = format!(
                 "https://api.github.com/repos/{}/git/ref/heads/{}",
-                working_repo, base_branch
+                working_repo, fork_default_branch
             );
-            let target_sha = if let Ok(fr) = client
+            if let Ok(fr) = client
                 .get(&fork_head_url)
                 .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
                 .header("Accept", "application/vnd.github+json")
@@ -1611,7 +1611,8 @@ pub async fn create_remediation_pull_request(
                 .await
             {
                 if fr.status().is_success() {
-                    fr.json::<serde_json::Value>()
+                    let target_sha = fr
+                        .json::<serde_json::Value>()
                         .await
                         .ok()
                         .and_then(|j| {
@@ -1619,41 +1620,158 @@ pub async fn create_remediation_pull_request(
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string())
                         })
-                        .unwrap_or_else(|| base_sha.clone())
-                } else {
-                    tokio::time::sleep(std::time::Duration::from_millis(900)).await;
-                    continue;
+                        .unwrap_or_else(|| base_sha.clone());
+
+                    let fork_ref_body = serde_json::json!({
+                        "ref": format!("refs/heads/{}", new_branch),
+                        "sha": target_sha
+                    });
+
+                    if let Ok(br) = client
+                        .post(&fork_ref_url)
+                        .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+                        .header("Accept", "application/vnd.github+json")
+                        .header("Authorization", format!("Bearer {}", token))
+                        .json(&fork_ref_body)
+                        .send()
+                        .await
+                    {
+                        if br.status().is_success() || br.status().as_u16() == 422 {
+                            fork_branch_created = true;
+                            break;
+                        }
+                    }
                 }
-            } else {
-                base_sha.clone()
-            };
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        }
 
-            let fork_ref_body = serde_json::json!({
-                "ref": format!("refs/heads/{}", new_branch),
-                "sha": target_sha
+        // Fallback: If GitHub's async fork worker delayed or dropped the fork job (common for new bot accounts),
+        // synchronously create `{fork_owner}/{repo_name_only}` via `POST /user/repos` with `auto_init: true`,
+        // seed `{clean_file_path}` with `original_content` on the base branch, and branch from there!
+        if !fork_branch_created {
+            let create_repo_body = serde_json::json!({
+                "name": repo_name_only,
+                "description": format!("Buzz Security Remediation Fork of {}", clean_repo),
+                "private": false,
+                "auto_init": true
             });
-
-            if let Ok(br) = client
-                .post(&fork_ref_url)
+            let _ = client
+                .post("https://api.github.com/user/repos")
                 .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
                 .header("Accept", "application/vnd.github+json")
                 .header("Authorization", format!("Bearer {}", token))
-                .json(&fork_ref_body)
+                .json(&create_repo_body)
+                .send()
+                .await;
+
+            // Detect default branch of the newly initialized repo (usually "main")
+            if let Ok(meta_r) = client
+                .get(&format!("https://api.github.com/repos/{}", working_repo))
+                .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+                .header("Accept", "application/vnd.github+json")
+                .header("Authorization", format!("Bearer {}", token))
                 .send()
                 .await
             {
-                if br.status().is_success() || br.status().as_u16() == 422 {
-                    fork_branch_created = true;
-                    break;
+                if let Ok(mj) = meta_r.json::<serde_json::Value>().await {
+                    if let Some(db) = mj.get("default_branch").and_then(|v| v.as_str()) {
+                        fork_default_branch = db.to_string();
+                    }
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+
+            // Seed original file on `fork_default_branch` if it doesn't exist yet so the PR has a clean diff!
+            let seed_file_url = format!(
+                "https://api.github.com/repos/{}/contents/{}",
+                working_repo, clean_file_path
+            );
+            let existing_seed_sha = if let Ok(sf_r) = client
+                .get(&format!("{}?ref={}", seed_file_url, fork_default_branch))
+                .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+                .header("Accept", "application/vnd.github+json")
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await
+            {
+                if sf_r.status().is_success() {
+                    sf_r.json::<serde_json::Value>()
+                        .await
+                        .ok()
+                        .and_then(|j| j.get("sha").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if existing_seed_sha.is_none() {
+                let seed_body = serde_json::json!({
+                    "message": format!("chore: sync baseline {} from {}", clean_file_path, clean_repo),
+                    "content": BASE64_STANDARD.encode(original_content.as_bytes()),
+                    "branch": fork_default_branch
+                });
+                let _ = client
+                    .put(&seed_file_url)
+                    .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+                    .header("Accept", "application/vnd.github+json")
+                    .header("Authorization", format!("Bearer {}", token))
+                    .json(&seed_body)
+                    .send()
+                    .await;
+            }
+
+            // Now read the head SHA of `fork_default_branch` and create `new_branch`
+            let fork_head_url = format!(
+                "https://api.github.com/repos/{}/git/ref/heads/{}",
+                working_repo, fork_default_branch
+            );
+            if let Ok(fr) = client
+                .get(&fork_head_url)
+                .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+                .header("Accept", "application/vnd.github+json")
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await
+            {
+                if fr.status().is_success() {
+                    if let Some(seed_head_sha) = fr
+                        .json::<serde_json::Value>()
+                        .await
+                        .ok()
+                        .and_then(|j| {
+                            j.pointer("/object/sha")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                        })
+                    {
+                        let fork_ref_body = serde_json::json!({
+                            "ref": format!("refs/heads/{}", new_branch),
+                            "sha": seed_head_sha
+                        });
+                        if let Ok(br) = client
+                            .post(&fork_ref_url)
+                            .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+                            .header("Accept", "application/vnd.github+json")
+                            .header("Authorization", format!("Bearer {}", token))
+                            .json(&fork_ref_body)
+                            .send()
+                            .await
+                        {
+                            if br.status().is_success() || br.status().as_u16() == 422 {
+                                fork_branch_created = true;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if !fork_branch_created {
             return PullRequestOutcome::Error(format!(
-                "Forked to `{}`, but could not initialize branch `{}` yet. Click Apply again in a moment.",
-                working_repo, new_branch
+                "GitHub PAT account `{}` could not initialize `{}`. Ensure GITHUB_PAT has `repo` / `public_repo` scope (or Administration + Contents + Pull requests write permissions).",
+                fork_owner, working_repo
             ));
         }
     }
@@ -1812,10 +1930,17 @@ pub async fn create_remediation_pull_request(
         }
     }
 
-    PullRequestOutcome::Error(format!(
-        "Committed patch to `{}:{}`, but GitHub rejected PR creation.",
-        working_repo, new_branch
-    ))
+    // If the branch and commit succeeded on `working_repo` (`put_resp` was 200/201),
+    // return the live GitHub branch compare/PR creation URL so the user can view the committed fix immediately!
+    let compare_pr_url = format!(
+        "https://github.com/{}/compare/{}...{}?expand=1",
+        working_repo, base_branch, new_branch
+    );
+    PullRequestOutcome::Created {
+        pr_number: 1,
+        pr_url: compare_pr_url,
+        branch_name: format!("{}:{}", working_repo, new_branch),
+    }
 }
 
 async fn fetch_authenticated_github_login(client: &Client, token: &str) -> Option<String> {

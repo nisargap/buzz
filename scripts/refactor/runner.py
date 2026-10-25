@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import uuid
 
-from .policy import RefactorError, load_policy, safe_relative
+from .policy import RefactorError, load_policy, parse_policy, safe_relative
 from .repository import MAX_FILE_BYTES, digest, git, tracked_files
 
 
@@ -45,6 +45,10 @@ def patch_state(worktree, revision, selected, policy):
     for path in paths:
         if path not in selected or not policy.allows(path):
             raise RefactorError(f"Candidate changes a protected or unselected path: {path}")
+    # Also validate selected files whose changes Git filters may hide.
+    for path in selected:
+        if path not in originals:
+            raise RefactorError(f"Not an eligible tracked file: {path}")
         target = local_path(worktree, path)
         if not target.is_file():
             raise RefactorError(f"Deleting files is outside the MVP scope: {path}")
@@ -107,14 +111,24 @@ def execute_check(worktree, check):
                 "output": output[:32_768].decode("utf-8", errors="replace"), "output_truncated": truncated}
 
 
+def selected_state(worktree, selected):
+    # Git's clean filters (including EOL normalization) can hide byte changes.
+    state = {}
+    for path in selected:
+        target = local_path(worktree, path)
+        state[path] = (digest(target.read_bytes()), target.stat().st_mode & 0o111)
+    return state
+
+
 def verify_checks(worktree, revision, selected, policy):
     before, _ = patch_state(worktree, revision, selected, policy)
+    before_sources = selected_state(worktree, selected)
     results = []
     for check in policy.checks:
         result = execute_check(worktree, check)
         results.append(result)
         after, _ = patch_state(worktree, revision, selected, policy)
-        if before["sha256"] != after["sha256"]:
+        if before["sha256"] != after["sha256"] or before_sources != selected_state(worktree, selected):
             raise RefactorError(f"Check '{check.name}' modified tracked source. Validation is invalid.")
     return results
 
@@ -132,19 +146,21 @@ def result_status(baseline, candidate):
 def create_run(repo, rules_path, policy, sources, proposal, revision, feedback):
     # A customer edit during the provider request must not silently authorize a
     # different set of commands, or leave a saved policy unlike the one used.
-    if load_policy(rules_path) != policy:
+    rules_bytes = rules_path.read_bytes()
+    # Match load_policy's universal-newline parsing, but retain the exact input.
+    rules_text = rules_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    if parse_policy(rules_text) != policy:
         raise RefactorError("Rules changed during proposal generation; start a new run.")
     run_id = uuid.uuid4().hex[:12]
     run_dir = local_path(repo, f".refactor/runs/{run_id}")
     run_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
-    rules_text = rules_path.read_text(encoding="utf-8")
-    (run_dir / "rules.md").write_text(rules_text, encoding="utf-8")
+    (run_dir / "rules.md").write_bytes(rules_bytes)
     write_json(run_dir / "proposal.json", proposal)
     worktree = repo.parent / f"{repo.name}-refactor-{run_id}"
     branch = f"refactor/{run_id}"
     report = {
         "id": run_id, "repository": str(repo), "revision": revision,
-        "rules_path": str(rules_path), "rules_sha256": digest(rules_text),
+        "rules_path": str(rules_path), "rules_sha256": digest(rules_bytes),
         "selected": [source["path"] for source in sources], "feedback": feedback,
         "summary": proposal["summary"], "rule": proposal["rule"], "tradeoffs": proposal["tradeoffs"],
         "commands": [asdict(check) for check in policy.checks],
@@ -156,12 +172,19 @@ def create_run(repo, rules_path, policy, sources, proposal, revision, feedback):
             report.update(status="no_change", worktree=None, branch=None)
         else:
             git(repo, "worktree", "add", "-b", branch, str(worktree), revision)
+            if git(worktree, "status", "--porcelain"):
+                raise RefactorError("Initial worktree is not clean; no checks or edits were applied.")
             report["baseline"] = verify_checks(worktree, revision, report["selected"], policy)
             for edit in proposal["edits"]:
                 target = local_path(worktree, edit["path"])
-                if digest(target.read_bytes()) != edit["before_sha256"]:
-                    raise RefactorError(f"Worktree bytes differ from proposal base: {edit['path']}")
-                target.write_bytes(edit["content"].encode("utf-8"))
+                if digest(git(worktree, "show", f"{revision}:{edit['path']}")) != edit["before_sha256"]:
+                    raise RefactorError(f"Committed snapshot differs from proposal base: {edit['path']}")
+                checkout = target.read_bytes()
+                content = edit["content"].encode("utf-8")
+                # Preserve a uniform CRLF checkout without invoking new filters.
+                if b"\r\n" in checkout and b"\n" not in checkout.replace(b"\r\n", b""):
+                    content = content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+                target.write_bytes(content)
             report["patch"], diff = patch_state(worktree, revision, report["selected"], policy)
             (run_dir / "candidate.patch").write_bytes(diff)
             report["candidate"] = verify_checks(worktree, revision, report["selected"], policy)
@@ -179,18 +202,22 @@ def load_run(repo, run_id):
     run_dir = local_path(repo, f".refactor/runs/{run_id}")
     report = json.loads(local_path(repo, f".refactor/runs/{run_id}/report.json").read_text(encoding="utf-8"))
     expected_worktree = repo.parent / f"{repo.name}-refactor-{run_id}"
-    if report["repository"] != str(repo) or report["worktree"] != str(expected_worktree):
+    no_change = (report["status"] == "no_change" and report["worktree"] is None
+                 and report["branch"] is None and report["patch"] is None)
+    if report["repository"] != str(repo) or (not no_change and report["worktree"] != str(expected_worktree)):
         raise RefactorError("This run has no active worktree or belongs to a different repository.")
     saved_rules = local_path(repo, f".refactor/runs/{run_id}/rules.md")
     if digest(saved_rules.read_bytes()) != report["rules_sha256"]:
         raise RefactorError("Saved run policy changed; start a new run.")
     if digest(Path(report["rules_path"]).read_bytes()) != report["rules_sha256"]:
         raise RefactorError("Customer rules changed; start a new run to use them explicitly.")
-    return run_dir, report, load_policy(saved_rules), expected_worktree
+    return run_dir, report, load_policy(saved_rules), None if no_change else expected_worktree
 
 
 def recheck_run(repo, run_id, approved):
     run_dir, report, policy, worktree = load_run(repo, run_id)
+    if worktree is None:
+        raise RefactorError("This no-change run has no patch or worktree to check. Start a new run to propose edits.")
     if policy.checks and not approved:
         raise RefactorError("Pass --approve-checks to execute the policy's commands on trusted code.")
     report["review"] = "pending"
@@ -213,13 +240,22 @@ def review_run(repo, run_id, decision):
         report["review"] = "rejected"
         write_json(run_dir / "report.json", report)
         return report, b""
-    state, diff = patch_state(worktree, report["revision"], report["selected"], policy)
+    if worktree is None:
+        if decision == "approve":
+            raise RefactorError("This no-change run has no patch to approve. Start a new run to propose edits.")
+        return report, b""
+    try:
+        state, diff = patch_state(worktree, report["revision"], report["selected"], policy)
+    except (RefactorError, OSError, subprocess.SubprocessError) as error:
+        report.update(status="needs_recheck", review="pending", error=str(error))
+        write_json(run_dir / "report.json", report)
+        raise
+    if state != report["patch"]:
+        report.update(status="needs_recheck", review="pending")
+        write_json(run_dir / "report.json", report)
     if decision == "approve":
-        if not state["files"] or report["status"] != "ready_for_review" or state != report["patch"]:
+        if not state["files"] or report["status"] != "ready_for_review":
             raise RefactorError("Only the exact checked patch can be approved. Run check after edits; missing/failed checks block approval.")
         report["review"] = "approved"
-        write_json(run_dir / "report.json", report)
-    elif state != report["patch"]:
-        report = {**report, "status": "needs_recheck", "review": "pending"}
         write_json(run_dir / "report.json", report)
     return report, diff

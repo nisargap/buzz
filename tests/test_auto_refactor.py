@@ -112,13 +112,75 @@ class RefactorIntegrationTests(unittest.TestCase):
         (worktree / "src/normalize.py").write_text(PYTHON_AFTER + "\n", encoding="utf-8")
         with self.assertRaisesRegex(RefactorError, "exact checked patch"):
             review_run(self.repo, report["id"], "approve")
+        saved = json.loads((run_dir / "report.json").read_text())
+        self.assertEqual(saved["status"], "needs_recheck")
+        self.assertEqual(saved["review"], "pending")
         shown, _ = review_run(self.repo, report["id"], None)
         self.assertEqual(shown["status"], "needs_recheck")
+        self.assertEqual(json.loads((run_dir / "report.json").read_text()), shown)
         _, checked = recheck_run(self.repo, report["id"], True)
         self.assertEqual(checked["status"], "ready_for_review")
         self.assertEqual(checked["review"], "pending")
         self.assertEqual(review_run(self.repo, report["id"], "approve")[0]["review"], "approved")
         self.assertIn("customer's uncommitted work", (self.repo / "src/normalize.py").read_text())
+
+    def test_viewing_changed_patch_clears_saved_approval(self):
+        run_dir, report = self.run_candidate()
+        review_run(self.repo, report["id"], "approve")
+        (Path(report["worktree"]) / "src/normalize.py").write_text(PYTHON_AFTER + "\n", encoding="utf-8")
+        shown, diff = review_run(self.repo, report["id"], None)
+        self.assertTrue(diff)
+        self.assertEqual(shown["status"], "needs_recheck")
+        self.assertEqual(shown["review"], "pending")
+        self.assertEqual(json.loads((run_dir / "report.json").read_text()), shown)
+
+    def test_review_errors_clear_saved_approval_and_still_allow_rejection(self):
+        for decision in (None, "approve"):
+            with self.subTest(decision=decision):
+                run_dir, report = self.run_candidate()
+                review_run(self.repo, report["id"], "approve")
+                (Path(report["worktree"]) / "tests/check.py").write_text("pass\n", encoding="utf-8")
+                with self.assertRaisesRegex(RefactorError, "protected or unselected"):
+                    review_run(self.repo, report["id"], decision)
+                saved = json.loads((run_dir / "report.json").read_text())
+                self.assertEqual(saved["status"], "needs_recheck")
+                self.assertEqual(saved["review"], "pending")
+                self.assertIn("protected or unselected", saved["error"])
+                rejected, _ = review_run(self.repo, report["id"], "reject")
+                self.assertEqual(rejected["review"], "rejected")
+                self.assertEqual(json.loads((run_dir / "report.json").read_text()), rejected)
+
+    def test_crlf_checkout_checks_diff_and_review(self):
+        self.command("config", "core.autocrlf", "true")
+        for attributes in (False, True):
+            with self.subTest(attributes=attributes):
+                if attributes:
+                    self.put(".gitattributes", "*.py text eol=crlf\n")
+                    self.command("add", ".gitattributes")
+                    self.command("commit", "-m", "Require CRLF Python checkouts")
+                self.put("src/normalize.py", PYTHON_BEFORE + "# customer's uncommitted work\n")
+                original = (self.repo / "src/normalize.py").read_bytes()
+                original_status = self.command("status", "--porcelain")
+                run_dir, report = self.run_candidate()
+                self.assertEqual(report["status"], "ready_for_review", report)
+                self.assertEqual(report["baseline"][0]["returncode"], 0)
+                self.assertEqual(report["candidate"][0]["returncode"], 0)
+                worktree = Path(report["worktree"])
+                self.assertEqual((worktree / "src/normalize.py").read_bytes(), PYTHON_AFTER.replace("\n", "\r\n").encode())
+                self.assertEqual(git(worktree, "show", f"{report['revision']}:src/normalize.py"), PYTHON_BEFORE.encode())
+                self.assertEqual(report["patch"]["files"], ["src/normalize.py"])
+                self.assertEqual(report["patch"]["changed_lines"], 3)
+                shown, diff = review_run(self.repo, report["id"], None)
+                self.assertEqual(shown["status"], "ready_for_review")
+                self.assertEqual(diff, (run_dir / "candidate.patch").read_bytes())
+                self.assertIn(b"-    cleaned = value.strip()", diff)
+                self.assertIn(b"+    return value.strip()", diff)
+                self.assertNotIn(b"\r", diff)
+                self.assertEqual(review_run(self.repo, report["id"], "approve")[0]["review"], "approved")
+                _, checked = recheck_run(self.repo, report["id"], True)
+                self.assertEqual(checked["status"], "ready_for_review", checked)
+                self.assertEqual((self.repo / "src/normalize.py").read_bytes(), original)
+                self.assertEqual(self.command("status", "--porcelain"), original_status)
 
     @unittest.skipUnless(shutil.which("node"), "Node required for the second-language fixture")
     def test_same_runner_on_javascript(self):
@@ -190,6 +252,70 @@ class RefactorIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(RefactorError, "rules changed"):
             recheck_run(self.repo, report["id"], True)
 
+    def test_crlf_rules_keep_exact_saved_bytes_and_change_detection(self):
+        raw_rules = self.rules_path.read_bytes().replace(b"\n", b"\r\n")
+        self.rules_path.write_bytes(raw_rules)
+        run_dir, report = self.run_candidate()
+        self.assertEqual(report["status"], "ready_for_review", report)
+        self.assertEqual(report["rules_sha256"], digest(raw_rules))
+        self.assertEqual((run_dir / "rules.md").read_bytes(), raw_rules)
+        self.assertEqual(review_run(self.repo, report["id"], "approve")[0]["review"], "approved")
+        _, checked = recheck_run(self.repo, report["id"], True)
+        self.assertEqual(checked["status"], "ready_for_review", checked)
+        self.assertEqual(self.rules_path.read_bytes(), raw_rules)
+        # Even a semantics-preserving byte change still requires a new attempt.
+        self.rules_path.write_bytes(raw_rules.replace(b"\r\n", b"\n"))
+        with self.assertRaisesRegex(RefactorError, "Customer rules changed"):
+            review_run(self.repo, report["id"], None)
+
+    def test_saved_rules_changes_are_still_rejected(self):
+        run_dir, report = self.run_candidate()
+        saved_rules = run_dir / "rules.md"
+        saved_rules.write_bytes(saved_rules.read_bytes() + b"\n")
+        with self.assertRaisesRegex(RefactorError, "Saved run policy changed"):
+            recheck_run(self.repo, report["id"], True)
+
+    def test_initial_dirty_worktree_blocks_checks_and_edits(self):
+        def dirty_checkout(repo, *args):
+            result = git(repo, *args)
+            if args[:2] == ("worktree", "add"):
+                (Path(args[4]) / "src/normalize.py").write_text(PYTHON_BEFORE + "# unexpected checkout edit\n")
+            return result
+
+        with patch("scripts.refactor.runner.git", side_effect=dirty_checkout), patch("scripts.refactor.runner.execute_check") as check:
+            _, report = self.run_candidate()
+        self.assertEqual(report["status"], "blocked")
+        self.assertIn("Initial worktree is not clean", report["error"])
+        check.assert_not_called()
+        self.assertIn("unexpected checkout edit", (Path(report["worktree"]) / "src/normalize.py").read_text())
+        self.assertEqual((self.repo / "src/normalize.py").read_text(), PYTHON_BEFORE)
+
+    def test_check_mutations_hidden_by_eol_normalization_are_blocked(self):
+        self.put(".gitattributes", "*.py text eol=crlf\n")
+        self.command("add", ".gitattributes")
+        self.command("commit", "-m", "Require CRLF Python checkouts")
+        original = (self.repo / "src/normalize.py").read_bytes()
+        for stage in ("baseline", "candidate"):
+            with self.subTest(stage=stage):
+                condition = "True" if stage == "baseline" else "b'return value.strip()' in data"
+                command = ("from pathlib import Path; p = Path('src/normalize.py'); data = p.read_bytes(); "
+                           f"p.write_bytes(data.replace(b'\\r\\n', b'\\n')) if {condition} else None")
+                self.set_policy(checks=[{"name": "eol mutator", "argv": [sys.executable, "-c", command]}])
+                _, report = self.run_candidate()
+                self.assertEqual(report["status"], "blocked", report)
+                self.assertIn("modified tracked source", report["error"])
+                worktree = Path(report["worktree"])
+                expected = PYTHON_BEFORE if stage == "baseline" else PYTHON_AFTER
+                self.assertEqual((worktree / "src/normalize.py").read_bytes(), expected.encode())
+                diff = git(worktree, "diff", "HEAD", "--", "src/normalize.py")
+                if stage == "baseline":
+                    self.assertEqual(diff, b"")
+                    self.assertEqual(report["baseline"], [])
+                else:
+                    self.assertEqual(report["baseline"][0]["returncode"], 0)
+                    self.assertEqual(digest(diff), report["patch"]["sha256"])
+                self.assertEqual((self.repo / "src/normalize.py").read_bytes(), original)
+
     def test_check_that_edits_source_is_blocked(self):
         self.set_policy(checks=[{"name": "mutator", "argv": [sys.executable, "-c", "from pathlib import Path; Path('src/normalize.py').write_text('changed')"]}])
         _, report = self.run_candidate()
@@ -207,6 +333,15 @@ class RefactorIntegrationTests(unittest.TestCase):
         (worktree / "src/normalize.py").symlink_to(self.repo / "src/normalize.py")
         _, checked = recheck_run(self.repo, report["id"], True)
         self.assertEqual(checked["status"], "blocked")
+
+    def test_mode_changes_are_blocked_even_when_git_ignores_them(self):
+        self.command("config", "core.filemode", "false")
+        self.set_policy(checks=[{"name": "mode mutator", "argv": [sys.executable, "-c", "from pathlib import Path; Path('src/normalize.py').chmod(0o755)"]}])
+        _, report = self.run_candidate()
+        self.assertEqual(report["status"], "blocked", report)
+        self.assertIn("File mode changes", report["error"])
+        self.assertEqual(git(Path(report["worktree"]), "diff", "HEAD", "--"), b"")
+        self.assertEqual((self.repo / "src/normalize.py").stat().st_mode & 0o111, 0)
 
     def test_context_is_committed_and_secret_files_are_excluded(self):
         self.put(".env", "SECRET=not-for-model\n")
@@ -244,11 +379,41 @@ class RefactorIntegrationTests(unittest.TestCase):
         proposal = self.proposal(sources, PYTHON_AFTER)
         proposal["edits"] = []
         validate_proposal(proposal, sources, policy)
-        _, report = create_run(self.repo, self.rules_path, policy, sources, proposal, revision, "Keep explicit guards")
+        run_dir, report = create_run(self.repo, self.rules_path, policy, sources, proposal, revision, "Keep explicit guards")
         self.assertEqual(report["status"], "no_change")
         self.assertEqual(report["feedback"], "Keep explicit guards")
         self.assertIsNone(report["worktree"])
         self.assertEqual(self.rules_path.read_bytes(), rules_before)
+        shown, diff = review_run(self.repo, report["id"], None)
+        self.assertEqual(shown, report)
+        self.assertEqual(diff, b"")
+        with self.assertRaisesRegex(RefactorError, "no-change run has no patch to approve"):
+            review_run(self.repo, report["id"], "approve")
+        for approved in (False, True):
+            with self.assertRaisesRegex(RefactorError, "no-change run has no patch or worktree to check"):
+                recheck_run(self.repo, report["id"], approved)
+        self.assertEqual(json.loads((run_dir / "report.json").read_text()), report)
+        rejected, diff = review_run(self.repo, report["id"], "reject")
+        self.assertEqual(rejected["status"], "no_change")
+        self.assertEqual(rejected["review"], "rejected")
+        self.assertEqual(diff, b"")
+        self.assertEqual(json.loads((run_dir / "report.json").read_text()), rejected)
+        self.assertEqual(review_run(self.repo, report["id"], None)[0], rejected)
+        rejected["repository"] = str(self.repo.parent / "other")
+        (run_dir / "report.json").write_text(json.dumps(rejected))
+        with self.assertRaisesRegex(RefactorError, "different repository"):
+            review_run(self.repo, report["id"], None)
+
+    def test_real_runs_still_require_bound_worktree(self):
+        run_dir, report = self.run_candidate()
+        for worktree in (None, str(self.repo.parent / "other")):
+            with self.subTest(worktree=worktree):
+                report["worktree"] = worktree
+                (run_dir / "report.json").write_text(json.dumps(report))
+                with self.assertRaisesRegex(RefactorError, "no active worktree"):
+                    review_run(self.repo, report["id"], None)
+                with self.assertRaisesRegex(RefactorError, "no active worktree"):
+                    recheck_run(self.repo, report["id"], True)
 
     def test_cli_requires_execution_and_upload_consent(self):
         with contextlib.redirect_stderr(io.StringIO()) as output:

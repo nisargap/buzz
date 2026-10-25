@@ -26,6 +26,9 @@ pub struct AppConfig {
     pub github_fallback_token: Option<String>,
 }
 
+const DEFAULT_PUBLIC_SUPABASE_URL: &str = "https://nqdkfucblwmdmxmungev.supabase.co";
+const DEFAULT_PUBLIC_SUPABASE_ANON_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5xZGtmdWNibHdtZG14bXVuZ2V2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NDA2NjUsImV4cCI6MjEwODUxNjY2NX0.DRXe_D9liZmrR-mXbDOTU_0Ejkj1ywj5_CBdy90w6Eo";
+
 impl AppConfig {
     pub fn from_env() -> Self {
         load_dotenv_files();
@@ -39,10 +42,12 @@ impl AppConfig {
 
         Self {
             supabase_url: non_empty("SUPABASE_URL")
-                .or_else(|| non_empty("NEXT_PUBLIC_SUPABASE_URL")),
+                .or_else(|| non_empty("NEXT_PUBLIC_SUPABASE_URL"))
+                .or_else(|| Some(DEFAULT_PUBLIC_SUPABASE_URL.to_string())),
             supabase_anon_key: non_empty("SUPABASE_ANON_KEY")
                 .or_else(|| non_empty("NEXT_PUBLIC_SUPABASE_ANON_KEY"))
-                .or_else(|| non_empty("SUPABASE_PUBLISHABLE_KEY")),
+                .or_else(|| non_empty("SUPABASE_PUBLISHABLE_KEY"))
+                .or_else(|| Some(DEFAULT_PUBLIC_SUPABASE_ANON_KEY.to_string())),
             supabase_service_key: non_empty("SUPABASE_SERVICE_ROLE_KEY")
                 .or_else(|| non_empty("SUPABASE_SECRET_KEY")),
             gemini_api_key: non_empty("GEMINI_API_KEY"),

@@ -1041,13 +1041,19 @@
       };
 
       // 5. Supabase GitHub OAuth & HTMX Header Bridge
+      const PUBLIC_SUPABASE_URL = 'https://nqdkfucblwmdmxmungev.supabase.co';
+      const PUBLIC_SUPABASE_ANON_KEY =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5xZGtmdWNibHdtZG14bXVuZ2V2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NDA2NjUsImV4cCI6MjEwODUxNjY2NX0.DRXe_D9liZmrR-mXbDOTU_0Ejkj1ywj5_CBdy90w6Eo';
+
       const hadOAuthCallbackOnBoot =
         window.location.hash.indexOf('access_token=') !== -1 ||
         window.location.hash.indexOf('provider_token=') !== -1 ||
         window.location.search.indexOf('code=') !== -1 ||
         sessionStorage.getItem('buzz_oauth_pending') === '1';
 
-      let supabaseClient = null;
+      let supabaseClient = window.supabase
+        ? window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY)
+        : null;
       let supabaseUserId = localStorage.getItem('buzz_sb_uid') || '';
       let githubProviderToken = localStorage.getItem('buzz_gh_token') || '';
       let githubUserHandle = localStorage.getItem('buzz_gh_user') || '';
@@ -1176,12 +1182,10 @@
           window.buzzGoToStep(2);
         }
         try {
-          const res = await fetch('/api/auth_config');
-          if (!res.ok) return;
-          const cfg = await res.json();
-          if (cfg.supabase_url && cfg.supabase_anon_key && window.supabase) {
-            supabaseClient = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
-
+          if (!supabaseClient && window.supabase) {
+            supabaseClient = window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
+          }
+          if (supabaseClient) {
             supabaseClient.auth.onAuthStateChange(function (event, session) {
               if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') && session) {
                 applySupabaseSession(session);
@@ -1208,8 +1212,11 @@
       }
 
       window.buzzConnectGitHub = async function () {
+        sessionStorage.setItem('buzz_oauth_pending', '1');
+        if (!supabaseClient && window.supabase) {
+          supabaseClient = window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
+        }
         if (supabaseClient) {
-          sessionStorage.setItem('buzz_oauth_pending', '1');
           const { error } = await supabaseClient.auth.signInWithOAuth({
             provider: 'github',
             options: {
@@ -1218,28 +1225,12 @@
             }
           });
           if (!error) return;
-          sessionStorage.removeItem('buzz_oauth_pending');
         }
-        const input = window.prompt(
-          'Enter your GitHub Personal Access Token (ghp_...) or username to connect:',
-          githubUserHandle || 'nisargap'
-        );
-        if (input && input.trim()) {
-          const trimmed = input.trim();
-          if (trimmed.startsWith('ghp_') || trimmed.startsWith('github_pat_')) {
-            githubProviderToken = trimmed;
-            githubUserHandle = githubUserHandle || 'github-user';
-            localStorage.setItem('buzz_gh_token', githubProviderToken);
-          } else {
-            githubUserHandle = trimmed;
-          }
-          localStorage.setItem('buzz_gh_user', githubUserHandle);
-          updateAuthBadge();
-          if (window.htmx) {
-            htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
-            htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
-          }
-        }
+        // Direct redirect to Supabase GitHub OAuth authorize endpoint
+        window.location.href =
+          PUBLIC_SUPABASE_URL +
+          '/auth/v1/authorize?provider=github&scopes=read:user+repo&redirect_to=' +
+          encodeURIComponent(window.location.origin);
       };
 
       window.buzzSignOutGitHub = async function () {
@@ -1265,28 +1256,7 @@
       };
 
       window.buzzConnectGitHubForPR = async function () {
-        if (supabaseClient) {
-          sessionStorage.setItem('buzz_oauth_pending', '1');
-          const { error } = await supabaseClient.auth.signInWithOAuth({
-            provider: 'github',
-            options: {
-              scopes: 'read:user repo',
-              redirectTo: window.location.origin
-            }
-          });
-          if (!error) return;
-          sessionStorage.removeItem('buzz_oauth_pending');
-        }
-        const tok = window.prompt(
-          'Enter a GitHub Personal Access Token (ghp_... or github_pat_...) with `repo` permission to create remediation branches & Pull Requests:',
-          githubProviderToken || ''
-        );
-        if (tok && tok.trim()) {
-          githubProviderToken = tok.trim();
-          localStorage.setItem('buzz_gh_token', githubProviderToken);
-          updateAuthBadge();
-          window.alert('GitHub token saved! Click "⚡ APPLY & OPEN PR" on any patch to open the Pull Request.');
-        }
+        await window.buzzConnectGitHub();
       };
 
       initSupabaseAuth();

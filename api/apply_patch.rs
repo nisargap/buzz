@@ -43,6 +43,7 @@ fn parse_patch_request(body: &Body) -> PatchRequest {
     }
 
     PatchRequest {
+        finding_id: map.remove("finding_id").unwrap_or_default(),
         repo: map
             .remove("repo")
             .unwrap_or_else(|| "nisargap/buzz".to_string()),

@@ -1045,3 +1045,86 @@ body::before {
   color: var(--buzz-cyan);
   min-height: 1.4em;
 }
+
+/* ==========================================================================
+   SAVED REPO AUDITS LIST & AUTH STATUS BAR
+   ========================================================================== */
+
+.auth-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.saved-audits-panel {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 3px dashed var(--border-blue);
+  width: 100%;
+}
+
+.saved-audits-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.saved-audits-title {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  color: var(--buzz-cyan);
+}
+
+.saved-scans-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.saved-scan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--terminal-bg);
+  border: 2px solid var(--border-blue);
+}
+
+.saved-scan-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.grade-pill {
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  padding: 6px 8px;
+  border: 2px solid var(--border-dark);
+  line-height: 1;
+}
+
+.saved-scan-repo {
+  font-family: var(--font-code);
+  font-weight: 600;
+  font-size: 0.84rem;
+  color: var(--text-main);
+}
+
+.saved-scan-meta {
+  font-family: var(--font-code);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.saved-scan-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

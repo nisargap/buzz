@@ -137,6 +137,8 @@ pub struct GitHubRepoItem {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VulnerabilityFinding {
+    #[serde(default)]
+    pub id: Option<String>,
     pub cve_id: String,
     #[serde(default)]
     pub title: String,
@@ -158,6 +160,16 @@ pub struct VulnerabilityFinding {
     pub explanation: String,
     #[serde(default)]
     pub remediation_patch: String,
+    #[serde(default)]
+    pub patch_created: bool,
+    #[serde(default)]
+    pub pr_url: Option<String>,
+    #[serde(default)]
+    pub pr_number: Option<u64>,
+    #[serde(default)]
+    pub pr_branch: Option<String>,
+    #[serde(default)]
+    pub patched_by: Option<String>,
 }
 
 fn default_severity() -> String {
@@ -178,6 +190,8 @@ fn default_confidence() -> String {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuditReport {
+    #[serde(default)]
+    pub scan_id: Option<String>,
     pub repo_full_name: String,
     pub default_branch: String,
     pub commit_sha: String,
@@ -196,6 +210,22 @@ pub struct AuditReport {
     pub cves_checked: usize,
     pub source_origin: String,
     pub findings: Vec<VulnerabilityFinding>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SavedScanSummary {
+    pub id: String,
+    pub repo_full_name: String,
+    pub default_branch: String,
+    #[serde(default)]
+    pub commit_sha: String,
+    pub risk_score: u32,
+    pub grade: String,
+    pub files_inspected: usize,
+    pub cves_checked: usize,
+    #[serde(default)]
+    pub github_user: Option<String>,
+    pub created_at: String,
 }
 
 // ============================================================================
@@ -857,6 +887,7 @@ pub async fn run_gemini_argon_audit(
 ) -> AuditReport {
     if snapshot.files.is_empty() {
         return AuditReport {
+            scan_id: None,
             repo_full_name: snapshot.full_name.clone(),
             default_branch: snapshot.default_branch.clone(),
             commit_sha: snapshot.commit_sha.clone(),
@@ -1014,6 +1045,7 @@ async fn call_gemini_argon_api(
         if let Ok(parsed) = serde_json::from_str::<GeminiModelOutput>(cleaned_json) {
             let inspected_file_paths = snapshot.files.iter().map(|f| f.path.clone()).collect();
             return Some(AuditReport {
+                scan_id: None,
                 repo_full_name: snapshot.full_name.clone(),
                 default_branch: snapshot.default_branch.clone(),
                 commit_sha: snapshot.commit_sha.clone(),
@@ -1087,6 +1119,7 @@ fn synthesize_live_repo_audit(
 
             if let Some((line_no, snippet)) = matched_line {
                 findings.push(VulnerabilityFinding {
+                    id: None,
                     cve_id: cve.id.clone(),
                     title: cve.title.clone(),
                     package_name: cve.package_name.clone(),
@@ -1101,6 +1134,11 @@ fn synthesize_live_repo_audit(
                         cve.summary, file.path, line_no, snippet, cve.affected_versions
                     ),
                     remediation_patch: cve.remediation.clone(),
+                    patch_created: false,
+                    pr_url: None,
+                    pr_number: None,
+                    pr_branch: None,
+                    patched_by: None,
                 });
                 break;
             }
@@ -1147,6 +1185,7 @@ fn synthesize_live_repo_audit(
                 .find(|(_, l)| l.contains(needle))
             {
                 findings.push(VulnerabilityFinding {
+                    id: None,
                     cve_id: cwe.to_string(),
                     title: title.to_string(),
                     package_name: pkg.to_string(),
@@ -1164,6 +1203,11 @@ fn synthesize_live_repo_audit(
                         line.trim()
                     ),
                     remediation_patch: fix.to_string(),
+                    patch_created: false,
+                    pr_url: None,
+                    pr_number: None,
+                    pr_branch: None,
+                    patched_by: None,
                 });
                 break;
             }
@@ -1213,6 +1257,7 @@ fn synthesize_live_repo_audit(
     );
 
     AuditReport {
+        scan_id: None,
         repo_full_name: snapshot.full_name.clone(),
         default_branch: snapshot.default_branch.clone(),
         commit_sha: snapshot.commit_sha.clone(),
@@ -1235,23 +1280,41 @@ fn synthesize_live_repo_audit(
 }
 
 // ============================================================================
-// 6. SUPABASE SCAN PERSISTENCE
+// 6. SUPABASE SCAN & PATCH STATE PERSISTENCE (PER LOGGED-IN USER)
 // ============================================================================
 
-pub async fn persist_scan_report(client: &Client, config: &AppConfig, report: &AuditReport) {
+pub async fn persist_scan_report(
+    client: &Client,
+    config: &AppConfig,
+    report: &mut AuditReport,
+    user_id: Option<&str>,
+    github_user: Option<&str>,
+) {
     let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
         return;
     };
 
+    let clean_uid = user_id
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && s.len() == 36);
+    let clean_gh_user = github_user.map(|s| s.trim()).filter(|s| !s.is_empty());
+
     let scans_url = format!("{}/rest/v1/scans", base_url.trim_end_matches('/'));
     let scan_payload = serde_json::json!({
+        "user_id": clean_uid,
+        "github_user": clean_gh_user,
         "repo_full_name": report.repo_full_name,
         "default_branch": report.default_branch,
+        "commit_sha": report.commit_sha,
         "model_used": report.model_used,
         "risk_score": report.risk_score,
         "grade": report.grade,
         "executive_summary": report.executive_summary,
         "files_inspected": report.files_inspected,
+        "total_tree_files": report.total_tree_files,
+        "total_bytes_loaded": report.total_bytes_loaded,
+        "estimated_tokens": report.estimated_tokens,
+        "inspected_file_paths": report.inspected_file_paths,
         "cves_checked": report.cves_checked
     });
 
@@ -1270,6 +1333,8 @@ pub async fn persist_scan_report(client: &Client, config: &AppConfig, report: &A
                 .and_then(|r| r.get("id"))
                 .and_then(|v| v.as_str())
             {
+                report.scan_id = Some(scan_id.to_string());
+
                 if !report.findings.is_empty() {
                     let findings_url =
                         format!("{}/rest/v1/scan_findings", base_url.trim_end_matches('/'));
@@ -1286,29 +1351,270 @@ pub async fn persist_scan_report(client: &Client, config: &AppConfig, report: &A
                             serde_json::json!({
                                 "scan_id": scan_id,
                                 "cve_id": f.cve_id,
+                                "title": f.title,
                                 "package_name": f.package_name,
                                 "severity": norm_sev,
                                 "cvss_score": f.cvss_score,
+                                "cwe_id": f.cwe_id,
                                 "file_path": f.file_path,
                                 "line_reference": f.line_reference,
                                 "confidence": f.confidence,
                                 "explanation": f.explanation,
-                                "remediation_patch": f.remediation_patch
+                                "remediation_patch": f.remediation_patch,
+                                "patch_created": false
                             })
                         })
                         .collect();
 
-                    let _ = client
+                    if let Ok(f_resp) = client
                         .post(&findings_url)
                         .header("apikey", api_key)
                         .header("Authorization", format!("Bearer {}", api_key))
+                        .header("Prefer", "return=representation")
                         .json(&finding_rows)
                         .send()
-                        .await;
+                        .await
+                    {
+                        if let Ok(inserted) = f_resp.json::<Vec<serde_json::Value>>().await {
+                            for (idx, row) in inserted.into_iter().enumerate() {
+                                if let Some(fid) = row.get("id").and_then(|v| v.as_str()) {
+                                    if let Some(f) = report.findings.get_mut(idx) {
+                                        f.id = Some(fid.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+pub async fn update_finding_patch_state(
+    client: &Client,
+    config: &AppConfig,
+    finding_id: &str,
+    pr_number: u64,
+    pr_url: &str,
+    branch_name: &str,
+    patched_by: Option<&str>,
+) {
+    let trimmed_id = finding_id.trim();
+    if trimmed_id.is_empty() {
+        return;
+    }
+    let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
+        return;
+    };
+
+    let url = format!(
+        "{}/rest/v1/scan_findings?id=eq.{}",
+        base_url.trim_end_matches('/'),
+        urlencoding_simple(trimmed_id)
+    );
+    let payload = serde_json::json!({
+        "patch_created": true,
+        "pr_number": pr_number,
+        "pr_url": pr_url,
+        "pr_branch": branch_name,
+        "patched_by": patched_by
+    });
+
+    let _ = client
+        .patch(&url)
+        .header("apikey", api_key)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&payload)
+        .send()
+        .await;
+}
+
+pub async fn fetch_user_saved_scans(
+    client: &Client,
+    config: &AppConfig,
+    user_id: Option<&str>,
+    github_user: Option<&str>,
+) -> Vec<SavedScanSummary> {
+    let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
+        return Vec::new();
+    };
+
+    let clean_uid = user_id
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && s.len() == 36);
+    let clean_gh_user = github_user.map(|s| s.trim()).filter(|s| !s.is_empty());
+
+    let mut url = format!(
+        "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&order=created_at.desc&limit=15",
+        base_url.trim_end_matches('/')
+    );
+
+    if let Some(uid) = clean_uid {
+        url.push_str(&format!("&user_id=eq.{}", urlencoding_simple(uid)));
+    } else if let Some(gh) = clean_gh_user {
+        url.push_str(&format!("&github_user=eq.{}", urlencoding_simple(gh)));
+    }
+
+    if let Ok(resp) = client
+        .get(&url)
+        .header("apikey", api_key)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+    {
+        if resp.status().is_success() {
+            if let Ok(rows) = resp.json::<Vec<SavedScanSummary>>().await {
+                if !rows.is_empty() {
+                    return rows;
+                }
+            }
+        }
+    }
+
+    // Fallback: return most recent scans if user-specific filter returned none yet
+    let recent_url = format!(
+        "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&order=created_at.desc&limit=10",
+        base_url.trim_end_matches('/')
+    );
+    if let Ok(resp) = client
+        .get(&recent_url)
+        .header("apikey", api_key)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+    {
+        if resp.status().is_success() {
+            if let Ok(rows) = resp.json::<Vec<SavedScanSummary>>().await {
+                return rows;
+            }
+        }
+    }
+
+    Vec::new()
+}
+
+pub async fn fetch_saved_scan_by_id(
+    client: &Client,
+    config: &AppConfig,
+    scan_id: &str,
+) -> Option<AuditReport> {
+    let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
+        return None;
+    };
+    let clean_id = urlencoding_simple(scan_id.trim());
+    if clean_id.is_empty() {
+        return None;
+    }
+
+    let scan_url = format!(
+        "{}/rest/v1/scans?id=eq.{}&select=*&limit=1",
+        base_url.trim_end_matches('/'),
+        clean_id
+    );
+    let scan_resp = client
+        .get(&scan_url)
+        .header("apikey", api_key)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .ok()?;
+    if !scan_resp.status().is_success() {
+        return None;
+    }
+    let scan_rows: Vec<serde_json::Value> = scan_resp.json().await.ok()?;
+    let scan = scan_rows.first()?;
+
+    let findings_url = format!(
+        "{}/rest/v1/scan_findings?scan_id=eq.{}&select=*&order=cvss_score.desc",
+        base_url.trim_end_matches('/'),
+        clean_id
+    );
+    let findings_resp = client
+        .get(&findings_url)
+        .header("apikey", api_key)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .ok()?;
+    let findings: Vec<VulnerabilityFinding> = if findings_resp.status().is_success() {
+        findings_resp.json().await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let inspected_file_paths: Vec<String> = scan
+        .get("inspected_file_paths")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let files_inspected = scan
+        .get("files_inspected")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let total_tree_files = scan
+        .get("total_tree_files")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(files_inspected as u64) as usize;
+    let total_bytes_loaded = scan
+        .get("total_bytes_loaded")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let estimated_tokens = scan
+        .get("estimated_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    Some(AuditReport {
+        scan_id: Some(clean_id),
+        repo_full_name: scan
+            .get("repo_full_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        default_branch: scan
+            .get("default_branch")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main")
+            .to_string(),
+        commit_sha: scan
+            .get("commit_sha")
+            .and_then(|v| v.as_str())
+            .unwrap_or("HEAD")
+            .to_string(),
+        model_used: scan
+            .get("model_used")
+            .and_then(|v| v.as_str())
+            .unwrap_or("gemini-4-argon")
+            .to_string(),
+        risk_score: scan
+            .get("risk_score")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        grade: scan
+            .get("grade")
+            .and_then(|v| v.as_str())
+            .unwrap_or("A")
+            .to_string(),
+        executive_summary: scan
+            .get("executive_summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        files_inspected,
+        total_tree_files,
+        total_bytes_loaded,
+        estimated_tokens,
+        raw_tokens_before_compact: estimated_tokens,
+        auto_compacted: false,
+        compaction_saved_tokens: 0,
+        inspected_file_paths,
+        cves_checked: scan
+            .get("cves_checked")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        source_origin: "Saved Supabase Audit Record".to_string(),
+        findings,
+    })
 }
 
 // ============================================================================
@@ -1317,6 +1623,8 @@ pub async fn persist_scan_report(client: &Client, config: &AppConfig, report: &A
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PatchRequest {
+    #[serde(default)]
+    pub finding_id: String,
     pub repo: String,
     pub branch: String,
     pub cve_id: String,
@@ -1406,20 +1714,21 @@ pub async fn create_remediation_pull_request(
 ) -> PullRequestOutcome {
     let server_pat_authorized = verify_patch_signature(config, req);
 
-    // Prioritize the server's GITHUB_PAT (nisargap) when signed, with client token as fallback
+    // Prioritize the logged-in GitHub user's OAuth token (`X-GitHub-Token` from Supabase Auth) first,
+    // with server `GITHUB_PAT` as fallback when signed.
     let mut candidate_tokens: Vec<&str> = Vec::new();
+    if let Some(user_tok) = github_token.filter(|t| !t.trim().is_empty()) {
+        candidate_tokens.push(user_tok);
+    }
     if server_pat_authorized {
         if let Some(pat) = config
             .github_fallback_token
             .as_deref()
             .filter(|t| !t.trim().is_empty())
         {
-            candidate_tokens.push(pat);
-        }
-    }
-    if let Some(user_tok) = github_token.filter(|t| !t.trim().is_empty()) {
-        if !candidate_tokens.contains(&user_tok) {
-            candidate_tokens.push(user_tok);
+            if !candidate_tokens.contains(&pat) {
+                candidate_tokens.push(pat);
+            }
         }
     }
 
@@ -1844,6 +2153,16 @@ pub async fn create_remediation_pull_request(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                update_finding_patch_state(
+                    client,
+                    config,
+                    &req.finding_id,
+                    pr_number,
+                    &pr_url,
+                    &commit_branch,
+                    pat_user.as_deref(),
+                )
+                .await;
                 return PullRequestOutcome::Created {
                     pr_number,
                     pr_url,
@@ -1858,6 +2177,16 @@ pub async fn create_remediation_pull_request(
         "https://github.com/{}/compare/{}...{}?expand=1",
         clean_repo, base_branch, head_spec
     );
+    update_finding_patch_state(
+        client,
+        config,
+        &req.finding_id,
+        1,
+        &compare_pr_url,
+        &head_spec,
+        pat_user.as_deref(),
+    )
+    .await;
     PullRequestOutcome::Created {
         pr_number: 1,
         pr_url: compare_pr_url,
@@ -2132,8 +2461,71 @@ async fn synthesize_patched_file(
 pub mod templates {
     use super::{
         compute_patch_signature, AppConfig, AuditReport, CveRecord, GitHubRepoItem,
-        PullRequestOutcome,
+        PullRequestOutcome, SavedScanSummary,
     };
+
+    pub fn render_saved_scans_list(scans: &[SavedScanSummary]) -> String {
+        if scans.is_empty() {
+            return r#"<div style="font-size:0.76rem;color:var(--text-dim);padding:8px 0;">
+                No saved audits yet. Run your first repo audit above!
+            </div>"#
+                .to_string();
+        }
+
+        let mut rows = String::new();
+        for s in scans {
+            let repo = escape_html(&s.repo_full_name);
+            let branch = escape_html(&s.default_branch);
+            let grade = escape_html(&s.grade);
+            let scan_id = escape_html(&s.id);
+            let date_short: String = s.created_at.chars().take(16).collect();
+            let date_clean = escape_html(&date_short.replace('T', " "));
+
+            rows.push_str(&format!(
+                r##"<div class="saved-scan-row">
+                    <div class="saved-scan-info">
+                        <span class="grade-pill grade-{grade}">{grade}</span>
+                        <div>
+                            <div class="saved-scan-repo">{repo} <span style="color:var(--text-dim);">({branch})</span></div>
+                            <div class="saved-scan-meta">RISK: {risk}/100 • {files} FILES • {date}</div>
+                        </div>
+                    </div>
+                    <div class="saved-scan-actions">
+                        <button
+                            type="button"
+                            class="pixel-btn pixel-btn-sm"
+                            hx-get="/api/scans?id={scan_id}"
+                            hx-target="#report-container"
+                            hx-swap="innerHTML"
+                            hx-on::after-request="if(event.detail.successful) window.buzzGoToStep(4);"
+                        >
+                            VIEW
+                        </button>
+                        <button
+                            type="button"
+                            class="pixel-btn pixel-btn-sm"
+                            style="border-color:var(--buzz-yellow);color:var(--buzz-yellow);"
+                            onclick="window.buzzReauditRepo('{repo}')"
+                        >
+                            ↻ RE-AUDIT
+                        </button>
+                    </div>
+                </div>"##,
+                grade = grade,
+                repo = repo,
+                branch = branch,
+                risk = s.risk_score,
+                files = s.files_inspected,
+                date = date_clean,
+                scan_id = scan_id
+            ));
+        }
+
+        format!(
+            r#"<div class="saved-scans-list">{rows}</div>"#,
+            rows = rows
+        )
+    }
 
     pub fn render_pr_outcome(outcome: &PullRequestOutcome) -> String {
         match outcome {
@@ -2288,6 +2680,7 @@ pub mod templates {
         } else {
             for (idx, f) in report.findings.iter().enumerate() {
                 let sev = escape_html(&f.severity.to_uppercase());
+                let finding_id = escape_html(f.id.as_deref().unwrap_or(""));
                 let patch_token = compute_patch_signature(
                     &signing_config,
                     &report.repo_full_name,
@@ -2296,6 +2689,56 @@ pub mod templates {
                     &f.cve_id,
                 )
                 .unwrap_or_default();
+
+                let patch_action_html = if f.patch_created {
+                    let url = escape_html(f.pr_url.as_deref().unwrap_or("#"));
+                    let num = f.pr_number.unwrap_or(1);
+                    let branch = escape_html(f.pr_branch.as_deref().unwrap_or("patch-branch"));
+                    format!(
+                        r#"<div class="pr-badge-row">
+                            <span class="pr-status-tag success">✓ PATCH CREATED (`{branch}`)</span>
+                            <a href="{url}" target="_blank" rel="noopener noreferrer" class="pixel-btn pixel-btn-pr-link">
+                                ↗ VIEW PR #{num} ON GITHUB
+                            </a>
+                        </div>"#,
+                        branch = branch,
+                        url = url,
+                        num = num
+                    )
+                } else {
+                    format!(
+                        r##"<form
+                            hx-post="/api/apply_patch"
+                            hx-target="#patch-action-slot-{idx}"
+                            hx-swap="innerHTML"
+                            style="margin:0;display:inline-block;"
+                        >
+                            <input type="hidden" name="finding_id" value="{finding_id}" />
+                            <input type="hidden" name="repo" value="{repo}" />
+                            <input type="hidden" name="branch" value="{branch}" />
+                            <input type="hidden" name="cve_id" value="{cve_id}" />
+                            <input type="hidden" name="title" value="{title}" />
+                            <input type="hidden" name="file_path" value="{file_path}" />
+                            <input type="hidden" name="line_reference" value="{line_ref}" />
+                            <input type="hidden" name="remediation_patch" value="{patch}" />
+                            <input type="hidden" name="patch_token" value="{patch_token}" />
+                            <button type="submit" class="pixel-btn pixel-btn-apply">
+                                ⚡ APPLY &amp; OPEN PR
+                            </button>
+                        </form>"##,
+                        idx = idx,
+                        finding_id = finding_id,
+                        repo = escape_html(&report.repo_full_name),
+                        branch = escape_html(&report.default_branch),
+                        cve_id = escape_html(&f.cve_id),
+                        title = escape_html(&f.title),
+                        file_path = escape_html(&f.file_path),
+                        line_ref = escape_html(&f.line_reference),
+                        patch = escape_html(&f.remediation_patch),
+                        patch_token = escape_html(&patch_token)
+                    )
+                };
+
                 findings_html.push_str(&format!(
                     r##"<article class="finding-card sev-{sev}">
                         <div class="finding-top">
@@ -2323,32 +2766,13 @@ pub mod templates {
                             <div class="remediation-header-row">
                                 <span class="remediation-label">⚡ GEMINI 4 ARGON REMEDIATION PATCH</span>
                                 <div id="patch-action-slot-{idx}">
-                                    <form
-                                        hx-post="/api/apply_patch"
-                                        hx-target="#patch-action-slot-{idx}"
-                                        hx-swap="innerHTML"
-                                        style="margin:0;display:inline-block;"
-                                    >
-                                        <input type="hidden" name="repo" value="{repo}" />
-                                        <input type="hidden" name="branch" value="{branch}" />
-                                        <input type="hidden" name="cve_id" value="{cve_id}" />
-                                        <input type="hidden" name="title" value="{title}" />
-                                        <input type="hidden" name="file_path" value="{file_path}" />
-                                        <input type="hidden" name="line_reference" value="{line_ref}" />
-                                        <input type="hidden" name="remediation_patch" value="{patch}" />
-                                        <input type="hidden" name="patch_token" value="{patch_token}" />
-                                        <button type="submit" class="pixel-btn pixel-btn-apply">
-                                            ⚡ APPLY &amp; OPEN PR
-                                        </button>
-                                    </form>
+                                    {patch_action_html}
                                 </div>
                             </div>
                             <pre class="remediation-code">{patch}</pre>
                         </div>
                     </article>"##,
                     idx = idx,
-                    repo = escape_html(&report.repo_full_name),
-                    branch = escape_html(&report.default_branch),
                     sev = sev,
                     cve_id = escape_html(&f.cve_id),
                     cvss = f.cvss_score,
@@ -2360,7 +2784,7 @@ pub mod templates {
                     line_ref = escape_html(&f.line_reference),
                     explanation = escape_html(&f.explanation),
                     patch = escape_html(&f.remediation_patch),
-                    patch_token = escape_html(&patch_token)
+                    patch_action_html = patch_action_html
                 ));
             }
         }
@@ -2397,6 +2821,23 @@ pub mod templates {
                             {compact_badge}
                             <span class="meta-tag">CVELIST V5 CHECKED: {cves}</span>
                             <span class="meta-tag">FINDINGS: {hits}</span>
+                        </div>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+                            <button
+                                type="button"
+                                class="pixel-btn pixel-btn-sm"
+                                style="border-color:var(--buzz-yellow);color:var(--buzz-yellow);"
+                                onclick="window.buzzReauditRepo('{repo}')"
+                            >
+                                ↻ RE-AUDIT {repo}
+                            </button>
+                            <button
+                                type="button"
+                                class="pixel-btn pixel-btn-sm"
+                                onclick="window.buzzGoToStep(2)"
+                            >
+                                ＋ AUDIT NEW REPO
+                            </button>
                         </div>
                     </div>
 

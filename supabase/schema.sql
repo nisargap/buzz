@@ -28,37 +28,71 @@ CREATE INDEX IF NOT EXISTS idx_cves_severity ON public.cves (severity);
 -- 2. Repository Audit Scans Table
 CREATE TABLE IF NOT EXISTS public.scans (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NULL,                        -- Linked to auth.users when signed in with GitHub
-    repo_full_name TEXT NOT NULL,             -- e.g. 'vercel/next.js' or 'owner/repo'
+    user_id UUID NULL,                        -- Linked to auth.users when signed in with GitHub via Supabase Auth
+    github_user TEXT NULL,                    -- GitHub username of the logged-in user
+    repo_full_name TEXT NOT NULL,             -- e.g. 'nisargap/buzz' or 'owner/repo'
     default_branch TEXT NOT NULL DEFAULT 'main',
+    commit_sha TEXT NOT NULL DEFAULT 'HEAD',
     model_used TEXT NOT NULL DEFAULT 'gemini-4-argon',
     risk_score INTEGER NOT NULL DEFAULT 0 CHECK (risk_score >= 0 AND risk_score <= 100),
     grade TEXT NOT NULL DEFAULT 'A',
     executive_summary TEXT NOT NULL,
     files_inspected INTEGER NOT NULL DEFAULT 0,
+    total_tree_files INTEGER NOT NULL DEFAULT 0,
+    total_bytes_loaded INTEGER NOT NULL DEFAULT 0,
+    estimated_tokens INTEGER NOT NULL DEFAULT 0,
+    inspected_file_paths TEXT[] DEFAULT '{}',
     cves_checked INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_scans_repo ON public.scans (repo_full_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scans_user_id ON public.scans (user_id, created_at DESC);
 
--- 3. Matched CVE Vulnerability Findings per Scan
+-- 3. Matched CVE Vulnerability Findings per Scan (including persisted Patch / PR state)
 CREATE TABLE IF NOT EXISTS public.scan_findings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     scan_id UUID NOT NULL REFERENCES public.scans(id) ON DELETE CASCADE,
     cve_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
     package_name TEXT NOT NULL,
     severity TEXT NOT NULL CHECK (severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW')),
     cvss_score NUMERIC(3, 1) NOT NULL DEFAULT 5.0,
+    cwe_id TEXT NOT NULL DEFAULT 'CWE-1035',
     file_path TEXT NOT NULL,
     line_reference TEXT NOT NULL DEFAULT 'L1',
     confidence TEXT NOT NULL DEFAULT 'HIGH',
     explanation TEXT NOT NULL,
     remediation_patch TEXT NOT NULL,
+    patch_created BOOLEAN NOT NULL DEFAULT FALSE,
+    pr_url TEXT NULL,
+    pr_number INTEGER NULL,
+    pr_branch TEXT NULL,
+    patched_by TEXT NULL,
+    patched_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_scan_findings_scan_id ON public.scan_findings (scan_id);
+
+-- Idempotent column migrations for existing tables
+ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS github_user TEXT NULL;
+ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS commit_sha TEXT NOT NULL DEFAULT 'HEAD';
+ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS total_tree_files INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS total_bytes_loaded INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS estimated_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS inspected_file_paths TEXT[] DEFAULT '{}';
+
+ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS cwe_id TEXT NOT NULL DEFAULT 'CWE-1035';
+ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS patch_created BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS pr_url TEXT NULL;
+ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS pr_number INTEGER NULL;
+ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS pr_branch TEXT NULL;
+ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS patched_by TEXT NULL;
+ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS patched_at TIMESTAMPTZ NULL;
+
+CREATE INDEX IF NOT EXISTS idx_scans_github_user ON public.scans (github_user, created_at DESC);
 
 -- 4. Row-Level Security (RLS)
 ALTER TABLE public.cves ENABLE ROW LEVEL SECURITY;
@@ -90,4 +124,10 @@ CREATE POLICY "Read access to scan findings"
 DROP POLICY IF EXISTS "Insert access to scan findings" ON public.scan_findings;
 CREATE POLICY "Insert access to scan findings"
     ON public.scan_findings FOR INSERT
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Update access to scan findings" ON public.scan_findings;
+CREATE POLICY "Update access to scan findings"
+    ON public.scan_findings FOR UPDATE
+    USING (true)
     WITH CHECK (true);

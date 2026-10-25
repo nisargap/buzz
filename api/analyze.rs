@@ -20,21 +20,38 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
         .get("x-github-token")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    let user_id = req
+        .headers()
+        .get("x-supabase-user-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let gh_user = req
+        .headers()
+        .get("x-github-user")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     let repo_target = extract_repo_from_body(req.body())
         .unwrap_or_else(|| "nisargap/buzz".to_string());
 
-    // 1. Fetch repository files from GitHub (or built-in connected repo snapshot)
+    // 1. Fetch repository files from GitHub
     let snapshot = fetch_repo_snapshot(&client, &config, &repo_target, gh_token.as_deref()).await;
 
     // 2. Load CVE datasource from Supabase
     let cves = fetch_cves(&client, &config, None).await;
 
     // 3. Run Gemini 4 Argon CVE correlation & code analysis
-    let report = run_gemini_argon_audit(&client, &config, &snapshot, &cves).await;
+    let mut report = run_gemini_argon_audit(&client, &config, &snapshot, &cves).await;
 
-    // 4. Persist audit report to Supabase scans & scan_findings tables
-    persist_scan_report(&client, &config, &report).await;
+    // 4. Persist audit report to Supabase scans & scan_findings tables for the logged-in user
+    persist_scan_report(
+        &client,
+        &config,
+        &mut report,
+        user_id.as_deref(),
+        gh_user.as_deref(),
+    )
+    .await;
 
     // 5. Render visually appealing pixel-art HTML report for HTMX swap
     let html = templates::render_audit_report(&report);

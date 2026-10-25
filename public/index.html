@@ -63,16 +63,29 @@
           Gemini 4 Argon will load your repository into its 1M context window and cross-reference against the CVEProject/cvelistV5 datasource.
         </p>
 
-        <!-- Supabase GitHub OAuth Connect Button -->
-        <button
-          id="github-auth-btn"
-          type="button"
-          class="pixel-btn pixel-btn-github"
-          onclick="window.buzzConnectGitHub()"
-        >
-          <span id="github-auth-dot" class="led-dot warn"></span>
-          <span id="github-auth-label">CONNECT GITHUB WITH SUPABASE</span>
-        </button>
+        <!-- Supabase GitHub OAuth Connect & Sign Out Row -->
+        <div class="auth-bar-row">
+          <button
+            id="github-auth-btn"
+            type="button"
+            class="pixel-btn pixel-btn-github"
+            style="flex: 1;"
+            onclick="window.buzzConnectGitHub()"
+          >
+            <span id="github-auth-dot" class="led-dot warn"></span>
+            <span id="github-auth-label">SIGN IN WITH GITHUB (SUPABASE AUTH)</span>
+          </button>
+
+          <button
+            id="github-signout-btn"
+            type="button"
+            class="pixel-btn pixel-btn-sm"
+            style="display: none; border-color: var(--sev-critical); color: var(--sev-critical);"
+            onclick="window.buzzSignOutGitHub()"
+          >
+            SIGN OUT
+          </button>
+        </div>
 
         <!-- Connected GitHub Repo Dropdown Slot (populated via HTMX GET /api/repos) -->
         <div
@@ -137,6 +150,32 @@
             ⚡ ANALYZE REPO IN 1M CONTEXT
           </button>
         </form>
+
+        <!-- Persisted Repository Audits for the Logged-In User -->
+        <div class="saved-audits-panel">
+          <div class="saved-audits-header">
+            <span class="saved-audits-title">📂 SAVED REPOSITORY AUDITS</span>
+            <button
+              type="button"
+              class="pixel-btn pixel-btn-sm"
+              hx-get="/api/scans"
+              hx-target="#saved-audits-slot"
+              hx-swap="innerHTML"
+            >
+              ↻ REFRESH
+            </button>
+          </div>
+          <div
+            id="saved-audits-slot"
+            hx-get="/api/scans"
+            hx-trigger="load"
+            hx-swap="innerHTML"
+          >
+            <div style="font-size: 0.74rem; color: var(--text-dim);">
+              Loading saved repository audits...
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -979,6 +1018,9 @@
         stopAllAnalysisTimers();
         if (event && event.detail && event.detail.successful) {
           window.buzzGoToStep(4);
+          if (window.htmx) {
+            htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
+          }
         }
       };
 
@@ -987,21 +1029,64 @@
         window.buzzGoToStep(2);
       };
 
+      window.buzzReauditRepo = function (repoFullName) {
+        const input = document.getElementById('repo-input');
+        const form = document.getElementById('analyze-form');
+        if (input && repoFullName) {
+          input.value = repoFullName;
+        }
+        if (form && window.htmx) {
+          htmx.trigger(form, 'submit');
+        }
+      };
+
       // 5. Supabase GitHub OAuth & HTMX Header Bridge
       let supabaseClient = null;
-      let githubProviderToken = localStorage.getItem('buzz_gh_token') || '';
-      let githubUserHandle = localStorage.getItem('buzz_gh_user') || '';
+      let supabaseUserId = sessionStorage.getItem('buzz_sb_uid') || '';
+      let githubProviderToken = sessionStorage.getItem('buzz_gh_token') || '';
+      let githubUserHandle = sessionStorage.getItem('buzz_gh_user') || '';
 
       function updateAuthBadge() {
         const dot = document.getElementById('github-auth-dot');
         const label = document.getElementById('github-auth-label');
+        const signOutBtn = document.getElementById('github-signout-btn');
         if (!dot || !label) return;
-        if (githubUserHandle || githubProviderToken) {
+        if (githubUserHandle || githubProviderToken || supabaseUserId) {
           dot.className = 'led-dot';
-          label.textContent = 'GITHUB CONNECTED: ' + (githubUserHandle || 'READY');
+          label.textContent = 'GITHUB LOGGED IN: @' + (githubUserHandle || 'CONNECTED');
+          if (signOutBtn) signOutBtn.style.display = 'inline-flex';
         } else {
           dot.className = 'led-dot warn';
-          label.textContent = 'CONNECT GITHUB WITH SUPABASE';
+          label.textContent = 'SIGN IN WITH GITHUB (SUPABASE AUTH)';
+          if (signOutBtn) signOutBtn.style.display = 'none';
+        }
+      }
+
+      function applySupabaseSession(session) {
+        if (!session) return;
+        if (session.user && session.user.id) {
+          supabaseUserId = session.user.id;
+          sessionStorage.setItem('buzz_sb_uid', supabaseUserId);
+        }
+        if (session.provider_token) {
+          githubProviderToken = session.provider_token;
+          sessionStorage.setItem('buzz_gh_token', githubProviderToken);
+        }
+        const meta = (session.user && session.user.user_metadata) || {};
+        const handle =
+          meta.user_name ||
+          meta.preferred_username ||
+          meta.name ||
+          (session.user && session.user.email) ||
+          '';
+        if (handle) {
+          githubUserHandle = handle;
+          sessionStorage.setItem('buzz_gh_user', githubUserHandle);
+        }
+        updateAuthBadge();
+        if (window.htmx) {
+          htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
+          htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
         }
       }
 
@@ -1011,6 +1096,9 @@
         }
         if (githubUserHandle) {
           evt.detail.headers['X-GitHub-User'] = githubUserHandle;
+        }
+        if (supabaseUserId) {
+          evt.detail.headers['X-Supabase-User-Id'] = supabaseUserId;
         }
       });
 
@@ -1074,17 +1162,27 @@
           const cfg = await res.json();
           if (cfg.supabase_url && cfg.supabase_anon_key && window.supabase) {
             supabaseClient = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+
+            supabaseClient.auth.onAuthStateChange(function (event, session) {
+              if (event === 'SIGNED_IN' && session) {
+                applySupabaseSession(session);
+                if (window.location.hash.includes('access_token')) {
+                  window.buzzGoToStep(2);
+                }
+              } else if (event === 'SIGNED_OUT') {
+                supabaseUserId = '';
+                githubProviderToken = '';
+                githubUserHandle = '';
+                sessionStorage.removeItem('buzz_sb_uid');
+                sessionStorage.removeItem('buzz_gh_token');
+                sessionStorage.removeItem('buzz_gh_user');
+                updateAuthBadge();
+              }
+            });
+
             const { data } = await supabaseClient.auth.getSession();
             if (data && data.session) {
-              if (data.session.provider_token) {
-                githubProviderToken = data.session.provider_token;
-                localStorage.setItem('buzz_gh_token', githubProviderToken);
-              }
-              const meta = data.session.user && data.session.user.user_metadata;
-              githubUserHandle = (meta && (meta.user_name || meta.preferred_username)) || data.session.user.email || 'connected';
-              localStorage.setItem('buzz_gh_user', githubUserHandle);
-              updateAuthBadge();
-              htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
+              applySupabaseSession(data.session);
               if (window.location.hash.includes('access_token')) {
                 window.buzzGoToStep(2);
               }
@@ -1105,23 +1203,43 @@
           if (!error) return;
         }
         const input = window.prompt(
-          'Enter your GitHub username (or Personal Access Token starting with ghp_) to load your repositories:',
+          'Enter your GitHub Personal Access Token (ghp_...) or username to connect:',
           githubUserHandle || 'nisargap'
         );
         if (input && input.trim()) {
           const trimmed = input.trim();
           if (trimmed.startsWith('ghp_') || trimmed.startsWith('github_pat_')) {
             githubProviderToken = trimmed;
-            githubUserHandle = 'token-auth';
-            localStorage.setItem('buzz_gh_token', githubProviderToken);
+            githubUserHandle = githubUserHandle || 'github-user';
+            sessionStorage.setItem('buzz_gh_token', githubProviderToken);
           } else {
             githubUserHandle = trimmed;
           }
-          localStorage.setItem('buzz_gh_user', githubUserHandle);
+          sessionStorage.setItem('buzz_gh_user', githubUserHandle);
           updateAuthBadge();
           if (window.htmx) {
             htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
+            htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
           }
+        }
+      };
+
+      window.buzzSignOutGitHub = async function () {
+        if (supabaseClient) {
+          try {
+            await supabaseClient.auth.signOut();
+          } catch (_) {}
+        }
+        supabaseUserId = '';
+        githubProviderToken = '';
+        githubUserHandle = '';
+        sessionStorage.removeItem('buzz_sb_uid');
+        sessionStorage.removeItem('buzz_gh_token');
+        sessionStorage.removeItem('buzz_gh_user');
+        updateAuthBadge();
+        if (window.htmx) {
+          htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
+          htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
         }
       };
 
@@ -1150,7 +1268,7 @@
         );
         if (tok && tok.trim()) {
           githubProviderToken = tok.trim();
-          localStorage.setItem('buzz_gh_token', githubProviderToken);
+          sessionStorage.setItem('buzz_gh_token', githubProviderToken);
           updateAuthBadge();
           window.alert('GitHub token saved! Click "⚡ APPLY & OPEN PR" on any patch to open the Pull Request.');
         }

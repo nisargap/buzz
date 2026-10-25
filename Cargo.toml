@@ -32,6 +32,11 @@ path = "api/analyze.rs"
 name = "apply_patch"
 path = "api/apply_patch.rs"
 
+[[bin]]
+name = "scans"
+path = "api/scans.rs"
+
+
 [dependencies]
 vercel_runtime = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

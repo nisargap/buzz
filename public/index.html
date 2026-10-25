@@ -55,11 +55,93 @@
   <main class="wizard-shell">
 
     <!-- ================================================================== -->
-    <!-- WIZARD PAGE 1: FRONT PAGE (JUST BUZZ LOGO + ANALYZE REPO BUTTON)   -->
+    <!-- WIZARD PAGE 1: FRONT PAGE (LARGE LOGO + PIXEL WIND + 3 CARDS)      -->
     <!-- ================================================================== -->
-    <section id="wizard-step-1" class="wizard-step active">
+    <section id="wizard-step-1" class="wizard-step wizard-step-front active">
       <div class="front-hero">
         <div class="front-logo-wrap">
+          <!-- Outer Circular Pixelated Wind Vortex (Clockwise stepped orbit) -->
+          <svg
+            class="pixel-wind-orbit-outer"
+            viewBox="0 0 64 64"
+            shape-rendering="crispEdges"
+            aria-hidden="true"
+          >
+            <!-- Top Arc Pixel Wind Gust -->
+            <rect x="24" y="2" width="12" height="1" fill="#7CE4FF" />
+            <rect x="20" y="3" width="6" height="1" fill="#D9E6FF" />
+            <rect x="36" y="3" width="6" height="1" fill="#48D1FF" />
+            <rect x="16" y="4" width="4" height="1" fill="#7CE4FF" />
+            <rect x="42" y="4" width="3" height="1" fill="#48D1FF" />
+            <rect x="14" y="6" width="2" height="1" fill="#D9E6FF" />
+            <!-- Wind curl tip -->
+            <rect x="15" y="7" width="2" height="1" fill="#7CE4FF" />
+            <rect x="17" y="6" width="1" height="1" fill="#FFFFFF" />
+
+            <!-- Right Arc Pixel Wind Gust -->
+            <rect x="60" y="24" width="1" height="12" fill="#7CE4FF" />
+            <rect x="59" y="20" width="1" height="6" fill="#48D1FF" />
+            <rect x="59" y="36" width="1" height="6" fill="#D9E6FF" />
+            <rect x="58" y="16" width="1" height="4" fill="#48D1FF" />
+            <rect x="58" y="42" width="1" height="4" fill="#7CE4FF" />
+            <rect x="56" y="46" width="2" height="1" fill="#D9E6FF" />
+            <rect x="55" y="44" width="1" height="2" fill="#FFFFFF" />
+
+            <!-- Bottom Arc Pixel Wind Gust -->
+            <rect x="28" y="61" width="12" height="1" fill="#7CE4FF" />
+            <rect x="22" y="60" width="6" height="1" fill="#48D1FF" />
+            <rect x="40" y="60" width="6" height="1" fill="#D9E6FF" />
+            <rect x="18" y="59" width="4" height="1" fill="#48D1FF" />
+            <rect x="46" y="58" width="3" height="1" fill="#7CE4FF" />
+            <rect x="47" y="56" width="2" height="1" fill="#FFFFFF" />
+
+            <!-- Left Arc Pixel Wind Gust -->
+            <rect x="3" y="26" width="1" height="12" fill="#D9E6FF" />
+            <rect x="4" y="20" width="1" height="6" fill="#7CE4FF" />
+            <rect x="4" y="38" width="1" height="6" fill="#48D1FF" />
+            <rect x="5" y="16" width="1" height="4" fill="#D9E6FF" />
+            <rect x="7" y="15" width="2" height="1" fill="#FFFFFF" />
+            <rect x="8" y="16" width="1" height="2" fill="#7CE4FF" />
+          </svg>
+
+          <!-- Inner Circular Pixelated Wind Swirl (Counter-clockwise stepped orbit) -->
+          <svg
+            class="pixel-wind-orbit-inner"
+            viewBox="0 0 64 64"
+            shape-rendering="crispEdges"
+            aria-hidden="true"
+          >
+            <!-- Upper-Right Inner Wind Ribbon -->
+            <rect x="38" y="8" width="6" height="1" fill="#B5F2FF" />
+            <rect x="44" y="9" width="4" height="1" fill="#48D1FF" />
+            <rect x="48" y="11" width="3" height="1" fill="#7CE4FF" />
+            <rect x="51" y="13" width="2" height="2" fill="#D9E6FF" />
+            <rect x="53" y="15" width="1" height="4" fill="#48D1FF" />
+            <rect x="50" y="10" width="1" height="1" fill="#FFE047" />
+
+            <!-- Lower-Right Inner Wind Ribbon -->
+            <rect x="54" y="38" width="1" height="6" fill="#7CE4FF" />
+            <rect x="52" y="44" width="1" height="4" fill="#D9E6FF" />
+            <rect x="49" y="48" width="3" height="1" fill="#48D1FF" />
+            <rect x="45" y="50" width="4" height="1" fill="#B5F2FF" />
+            <rect x="51" y="51" width="1" height="1" fill="#FFFFFF" />
+
+            <!-- Lower-Left Inner Wind Ribbon -->
+            <rect x="19" y="54" width="6" height="1" fill="#7CE4FF" />
+            <rect x="15" y="52" width="4" height="1" fill="#48D1FF" />
+            <rect x="12" y="49" width="3" height="1" fill="#D9E6FF" />
+            <rect x="10" y="45" width="1" height="4" fill="#B5F2FF" />
+            <rect x="13" y="52" width="1" height="1" fill="#FFE047" />
+
+            <!-- Upper-Left Inner Wind Ribbon -->
+            <rect x="9" y="19" width="1" height="6" fill="#B5F2FF" />
+            <rect x="10" y="15" width="1" height="4" fill="#7CE4FF" />
+            <rect x="12" y="12" width="3" height="1" fill="#D9E6FF" />
+            <rect x="15" y="10" width="5" height="1" fill="#48D1FF" />
+            <rect x="11" y="14" width="1" height="1" fill="#FFFFFF" />
+          </svg>
+
+          <!-- Large Floating Buzz Logo -->
           <img
             src="/assets/buzz-logo.svg"
             alt="Buzz Logo — Pixel Lightning Bolt with Two Dark Eyes Floating on a Cloud"
@@ -76,6 +158,111 @@
         >
           ⚡ ANALYZE REPO
         </button>
+
+        <!-- Three Separately Colored Feature Cards with Left Pixel Icons -->
+        <div class="front-features-grid">
+          <!-- Card 1: Gold — Deep 1M-Context Security Auditing -->
+          <article class="feature-pixel-card card-gold">
+            <div class="feature-icon-box" aria-hidden="true">
+              <!-- Pixel Shield + Lightning Scan Icon (24x24) -->
+              <svg class="feature-icon-svg" viewBox="0 0 24 24" shape-rendering="crispEdges">
+                <!-- Shield Dark Outline & Gold Rim -->
+                <rect x="5" y="2" width="14" height="2" fill="#FFE047" />
+                <rect x="3" y="4" width="2" height="8" fill="#FFE047" />
+                <rect x="19" y="4" width="2" height="8" fill="#FFE047" />
+                <rect x="5" y="4" width="14" height="8" fill="#2A1F08" />
+                <rect x="5" y="12" width="2" height="4" fill="#FFE047" />
+                <rect x="17" y="12" width="2" height="4" fill="#FFE047" />
+                <rect x="7" y="12" width="10" height="4" fill="#2A1F08" />
+                <rect x="7" y="16" width="2" height="3" fill="#FFE047" />
+                <rect x="15" y="16" width="2" height="3" fill="#FFE047" />
+                <rect x="9" y="16" width="6" height="3" fill="#2A1F08" />
+                <rect x="9" y="19" width="2" height="2" fill="#FFE047" />
+                <rect x="13" y="19" width="2" height="2" fill="#FFE047" />
+                <rect x="11" y="19" width="2" height="2" fill="#2A1F08" />
+                <rect x="11" y="21" width="2" height="2" fill="#FFE047" />
+                <!-- Inner Lightning Bolt & Scan Line inside Shield -->
+                <rect x="12" y="5" width="3" height="2" fill="#FFF8B8" />
+                <rect x="10" y="7" width="4" height="2" fill="#FFE047" />
+                <rect x="9" y="9" width="6" height="2" fill="#FFA800" />
+                <rect x="11" y="11" width="3" height="2" fill="#FFE047" />
+                <rect x="10" y="13" width="2" height="3" fill="#FFA800" />
+                <rect x="6" y="10" width="12" height="1" fill="#48D1FF" />
+              </svg>
+            </div>
+            <div>
+              <h2 class="feature-card-title">1M-CONTEXT CVE AUDITING</h2>
+              <p class="feature-card-desc">
+                Ingests your entire repository into Gemini 4 Argon's 1M context window to uncover real CVEs, CWEs, and deep code vulnerabilities.
+              </p>
+            </div>
+          </article>
+
+          <!-- Card 2: Green — Autonomous 1-Click Pull Request Remediation -->
+          <article class="feature-pixel-card card-green">
+            <div class="feature-icon-box" aria-hidden="true">
+              <!-- Pixel Git Pull Request Branch & Merge Patch Icon (24x24) -->
+              <svg class="feature-icon-svg" viewBox="0 0 24 24" shape-rendering="crispEdges">
+                <!-- Left Main Branch Node (Top) -->
+                <rect x="5" y="3" width="4" height="4" fill="#2EE68A" />
+                <rect x="6" y="4" width="2" height="2" fill="#051B10" />
+                <!-- Left Trunk Vertical Line -->
+                <rect x="6" y="7" width="2" height="10" fill="#2EE68A" />
+                <!-- Left Main Branch Node (Bottom) -->
+                <rect x="5" y="17" width="4" height="4" fill="#2EE68A" />
+                <rect x="6" y="18" width="2" height="2" fill="#051B10" />
+                <!-- PR Branch Curve to Right Node -->
+                <rect x="8" y="9" width="4" height="2" fill="#9EFFCE" />
+                <rect x="12" y="10" width="2" height="2" fill="#9EFFCE" />
+                <rect x="16" y="11" width="2" height="6" fill="#2EE68A" />
+                <!-- Right PR Target Node -->
+                <rect x="15" y="17" width="4" height="4" fill="#2EE68A" />
+                <rect x="16" y="18" width="2" height="2" fill="#051B10" />
+                <!-- Top-Right Sparkle / Patch '+' Badge -->
+                <rect x="16" y="4" width="2" height="6" fill="#FFE047" />
+                <rect x="14" y="6" width="6" height="2" fill="#FFE047" />
+              </svg>
+            </div>
+            <div>
+              <h2 class="feature-card-title">AUTONOMOUS PR REMEDIATION</h2>
+              <p class="feature-card-desc">
+                Synthesizes surgical security patches, automatically branches or forks the repo, and opens ready-to-merge GitHub Pull Requests.
+              </p>
+            </div>
+          </article>
+
+          <!-- Card 3: Cyan — Visual Codebase Architecture Diagrams -->
+          <article class="feature-pixel-card card-cyan">
+            <div class="feature-icon-box" aria-hidden="true">
+              <!-- Pixel Architecture Graph / Diagram Nodes Icon (24x24) -->
+              <svg class="feature-icon-svg" viewBox="0 0 24 24" shape-rendering="crispEdges">
+                <!-- Top Root Architecture Node -->
+                <rect x="8" y="2" width="8" height="5" fill="#48D1FF" />
+                <rect x="9" y="3" width="6" height="3" fill="#07192E" />
+                <rect x="10" y="4" width="4" height="1" fill="#FFE047" />
+                <!-- Connector Lines from Root to Child Nodes -->
+                <rect x="11" y="7" width="2" height="4" fill="#7CE4FF" />
+                <rect x="5" y="11" width="14" height="2" fill="#7CE4FF" />
+                <rect x="5" y="13" width="2" height="3" fill="#7CE4FF" />
+                <rect x="17" y="13" width="2" height="3" fill="#7CE4FF" />
+                <!-- Bottom-Left Module Node -->
+                <rect x="2" y="16" width="8" height="6" fill="#48D1FF" />
+                <rect x="3" y="17" width="6" height="4" fill="#07192E" />
+                <rect x="4" y="18" width="4" height="2" fill="#2EE68A" />
+                <!-- Bottom-Right Module Node -->
+                <rect x="14" y="16" width="8" height="6" fill="#48D1FF" />
+                <rect x="15" y="17" width="6" height="4" fill="#07192E" />
+                <rect x="16" y="18" width="4" height="2" fill="#FFE047" />
+              </svg>
+            </div>
+            <div>
+              <h2 class="feature-card-title">VISUAL CODEBASE DIAGRAMS</h2>
+              <p class="feature-card-desc">
+                Maps cross-file dataflows, trust boundaries, and dependency graphs into clear diagrams so you can understand any codebase fast.
+              </p>
+            </div>
+          </article>
+        </div>
       </div>
     </section>
 

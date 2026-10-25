@@ -395,7 +395,7 @@
                 class="pixel-checkbox-input"
                 checked
               />
-              <span>🎨 Generate Visual Heat-Saturated Neural Map of Codebase</span>
+              <span>🎨 Generate Interactive State Machine &amp; User-Flow Diagram</span>
             </label>
 
             <button
@@ -1566,6 +1566,7 @@
             } else if (reportContainer) {
               reportContainer.innerHTML = html + reportContainer.innerHTML;
             }
+            window.buzzSwitchReportTab('diagram');
             persistActiveReportState();
             window.buzzGoToStep(4);
           } else {
@@ -1579,6 +1580,26 @@
           }
           window.buzzGoToStep(4);
         }
+      };
+
+      window.buzzSwitchReportTab = function (tabName) {
+        const vulnsBtn = document.getElementById('tab-btn-vulns');
+        const diagBtn = document.getElementById('tab-btn-diagram');
+        const vulnsPane = document.getElementById('report-pane-vulns');
+        const diagPane = document.getElementById('report-pane-diagram');
+
+        if (tabName === 'diagram') {
+          if (vulnsBtn) vulnsBtn.classList.remove('active');
+          if (diagBtn) diagBtn.classList.add('active');
+          if (vulnsPane) vulnsPane.classList.remove('active');
+          if (diagPane) diagPane.classList.add('active');
+        } else {
+          if (vulnsBtn) vulnsBtn.classList.add('active');
+          if (diagBtn) diagBtn.classList.remove('active');
+          if (vulnsPane) vulnsPane.classList.add('active');
+          if (diagPane) diagPane.classList.remove('active');
+        }
+        persistActiveReportState();
       };
 
       window.buzzFinishAnalysisPage = function (event) {
@@ -1607,6 +1628,61 @@
         if (form && window.htmx) {
           htmx.trigger(form, 'submit');
         }
+      };
+
+      // Interactive State Machine Diagram Click & Filter Handlers
+      window.buzzSelectStateNode = function (nodeEl) {
+        if (!nodeEl) return;
+        const allNodes = document.querySelectorAll('.sm-state-node');
+        allNodes.forEach(function (el) {
+          el.classList.remove('selected-state');
+        });
+        nodeEl.classList.add('selected-state');
+
+        const tmpl = nodeEl.querySelector('.sm-node-inspector-template');
+        const inspector = document.getElementById('sm-inspector-panel');
+        if (tmpl && inspector) {
+          inspector.innerHTML = tmpl.innerHTML;
+        }
+      };
+
+      window.buzzJumpToStateNode = function (nodeId) {
+        if (!nodeId) return;
+        const target = document.getElementById('sm-node-' + nodeId);
+        if (target) {
+          window.buzzSelectStateNode(target);
+          target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      };
+
+      window.buzzFilterDiagramFlows = function (tierFilter, btnEl) {
+        if (btnEl) {
+          const allBtns = document.querySelectorAll('.sm-filter-btn');
+          allBtns.forEach(function (b) {
+            b.classList.remove('active');
+          });
+          btnEl.classList.add('active');
+        }
+
+        const edges = document.querySelectorAll('#sm-flow-canvas .sm-transition-edge');
+        edges.forEach(function (edgeEl) {
+          const edgeTier = edgeEl.getAttribute('data-flow-tier') || 'primary';
+          if (tierFilter === 'all' || edgeTier === tierFilter) {
+            edgeEl.classList.remove('hidden-by-filter');
+          } else {
+            edgeEl.classList.add('hidden-by-filter');
+          }
+        });
+
+        const nodes = document.querySelectorAll('#sm-flow-canvas .sm-state-node');
+        nodes.forEach(function (nodeEl) {
+          const nodeTier = nodeEl.getAttribute('data-flow-tier') || 'primary';
+          if (tierFilter === 'all' || nodeTier === tierFilter) {
+            nodeEl.style.opacity = '1';
+          } else {
+            nodeEl.style.opacity = '0.42';
+          }
+        });
       };
 
       // 5. Supabase GitHub OAuth & HTMX Header Bridge

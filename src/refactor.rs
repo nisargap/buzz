@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use std::collections::HashSet;
+use std::future::Future;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
@@ -529,6 +530,21 @@ fn identities(tree: &Value, paths: &[String], editable: bool) -> Result<Vec<File
         .collect()
 }
 
+fn selected_context(
+    tree: &Value,
+    files: &[String],
+    context: &[String],
+) -> Result<Vec<FileIdentity>> {
+    if context.len() > 3 || context.iter().any(|path| files.contains(path)) {
+        return Err(error(
+            400,
+            "Select up to 3 read-only context files, separate from editable files.",
+        ));
+    }
+    // Guidance such as AGENTS.md is eligible, but never added without selection.
+    identities(tree, context, false)
+}
+
 async fn read_blob(
     client: &Client,
     token: &str,
@@ -749,23 +765,7 @@ pub async fn execute(
             let (branch, sha) = metadata(client, token, &repo).await?;
             let tree = tree(client, token, &repo, &sha).await?;
             let selected = identities(&tree, &files, true)?;
-            let mut context_paths = context_files;
-            // Load repository guidance automatically without uploading a whole tree.
-            if !context_paths.iter().any(|path| path == "AGENTS.md")
-                && tree["tree"]
-                    .as_array()
-                    .map(|entries| {
-                        entries.iter().any(|entry| {
-                            entry["path"] == "AGENTS.md"
-                                && entry["mode"] == "100644"
-                                && entry["size"].as_u64().unwrap_or(u64::MAX) <= MAX_SOURCE as u64
-                        })
-                    })
-                    .unwrap_or(false)
-            {
-                context_paths.push("AGENTS.md".into());
-            }
-            let context_ids = identities(&tree, &context_paths, false)?;
+            let context_ids = selected_context(&tree, &files, &context_files)?;
             let (sources, context) = futures::try_join!(
                 read_sources(client, token, &repo, selected.clone()),
                 read_sources(client, token, &repo, context_ids)
@@ -831,6 +831,217 @@ pub async fn execute(
     }
 }
 
+// A small transport seam keeps retry decisions testable without live GitHub writes.
+trait GitHubApi {
+    fn request(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<Value>,
+    ) -> impl Future<Output = Result<Value>>;
+}
+
+struct ConnectedGitHub<'a> {
+    client: &'a Client,
+    token: &'a str,
+}
+
+impl GitHubApi for ConnectedGitHub<'_> {
+    async fn request(&self, method: Method, url: Url, body: Option<Value>) -> Result<Value> {
+        github(self.client, self.token, method, url, body).await
+    }
+}
+
+struct DraftPublication<'a> {
+    repo: &'a str,
+    branch: &'a str,
+    base_branch: &'a str,
+    base_sha: &'a str,
+    tree_sha: &'a str,
+}
+
+fn reference_url(repo: &str, branch: &str) -> Result<Url> {
+    let mut route = vec!["git", "ref", "heads"];
+    route.extend(branch.split('/'));
+    github_url(repo, &route)
+}
+
+async fn publication_head(
+    api: &impl GitHubApi,
+    repo: &str,
+    branch: &str,
+) -> Result<Option<String>> {
+    let reference = match api
+        .request(Method::GET, reference_url(repo, branch)?, None)
+        .await
+    {
+        Ok(reference) => reference,
+        Err(e) if e.status == 404 => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    reference["object"]["sha"]
+        .as_str()
+        .map(|sha| Some(sha.to_string()))
+        .ok_or_else(|| error(502, "Missing branch revision."))
+}
+
+async fn verified_publication_head(
+    api: &impl GitHubApi,
+    target: &DraftPublication<'_>,
+) -> Result<Option<String>> {
+    let Some(head) = publication_head(api, target.repo, target.branch).await? else {
+        return Ok(None);
+    };
+    let commit = api
+        .request(
+            Method::GET,
+            github_url(target.repo, &["git", "commits", &head])?,
+            None,
+        )
+        .await?;
+    let correct_parent = commit["parents"]
+        .as_array()
+        .map(|parents| parents.len() == 1 && parents[0]["sha"].as_str() == Some(target.base_sha))
+        .unwrap_or(false);
+    if commit["sha"].as_str() != Some(&head)
+        || commit["tree"]["sha"].as_str() != Some(target.tree_sha)
+        || !correct_parent
+    {
+        return Err(error(409, "The existing refactor branch does not match this reviewed patch. It was not overwritten; inspect it on GitHub."));
+    }
+    Ok(Some(head))
+}
+
+fn draft_outcome(pr: &Value, target: &DraftPublication<'_>, head: &str) -> Result<Value> {
+    let same_repo = |value: &Value| {
+        value
+            .as_str()
+            .map(|repo| repo.eq_ignore_ascii_case(target.repo))
+            .unwrap_or(false)
+    };
+    if pr["head"]["ref"].as_str() != Some(target.branch)
+        || pr["head"]["sha"].as_str() != Some(head)
+        || pr["base"]["ref"].as_str() != Some(target.base_branch)
+        || !same_repo(&pr["head"]["repo"]["full_name"])
+        || !same_repo(&pr["base"]["repo"]["full_name"])
+        || !pr["html_url"].is_string()
+    {
+        return Err(error(409, "The pull request no longer matches the reviewed branch. Inspect it on GitHub before retrying."));
+    }
+    if pr["state"] != "open" || pr["draft"] != true {
+        return Err(error(409, "A pull request for this patch already exists but is closed, merged, or no longer a draft. Inspect it on GitHub; Buzz will not reopen or duplicate it."));
+    }
+    Ok(
+        json!({"url": pr["html_url"], "branch": target.branch, "draft": true, "validation": "unverified"}),
+    )
+}
+
+async fn existing_draft(
+    api: &impl GitHubApi,
+    target: &DraftPublication<'_>,
+    head: &str,
+) -> Result<Option<Value>> {
+    let owner = target.repo.split('/').next().unwrap_or("");
+    let mut url = github_url(target.repo, &["pulls"])?;
+    url.query_pairs_mut()
+        .append_pair("state", "all")
+        .append_pair("head", &format!("{owner}:{}", target.branch))
+        .append_pair("sort", "created")
+        .append_pair("direction", "desc")
+        .append_pair("per_page", "100");
+    let response = api.request(Method::GET, url, None).await?;
+    let prs = response
+        .as_array()
+        .ok_or_else(|| error(502, "Missing pull request list."))?;
+    // Query by head alone so a retargeted PR cannot be duplicated on another base.
+    let pr = prs
+        .iter()
+        .find(|pr| pr["state"] == "open")
+        .or_else(|| prs.first());
+    pr.map(|pr| draft_outcome(pr, target, head)).transpose()
+}
+
+async fn require_publication_base(
+    api: &impl GitHubApi,
+    target: &DraftPublication<'_>,
+) -> Result<()> {
+    if publication_head(api, target.repo, target.base_branch)
+        .await?
+        .as_deref()
+        != Some(target.base_sha)
+    {
+        return Err(error(
+            409,
+            "The repository changed since review. No new PR was opened; generate a fresh proposal.",
+        ));
+    }
+    Ok(())
+}
+
+async fn publish_draft(
+    api: &impl GitHubApi,
+    target: &DraftPublication<'_>,
+    body: &str,
+) -> Result<Value> {
+    let existing_head = verified_publication_head(api, target).await?;
+    if let Some(head) = &existing_head {
+        if let Some(pr) = existing_draft(api, target, head).await? {
+            // Recover a lost success response even if the base branch has since moved.
+            return Ok(pr);
+        }
+    } else {
+        require_publication_base(api, target).await?;
+        let commit = api.request(Method::POST, github_url(target.repo, &["git", "commits"])?,
+            Some(json!({"message":"refactor: simplify scoped code with Buzz", "tree":target.tree_sha, "parents":[target.base_sha]}))).await?;
+        let sha = commit["sha"]
+            .as_str()
+            .ok_or_else(|| error(502, "GitHub did not return the proposed commit."))?;
+        require_publication_base(api, target).await?;
+        let created = api
+            .request(
+                Method::POST,
+                github_url(target.repo, &["git", "refs"])?,
+                Some(json!({"ref":format!("refs/heads/{}", target.branch), "sha":sha})),
+            )
+            .await;
+        if let Err(e) = created {
+            if e.status != 409 && e.status < 500 {
+                return Err(e);
+            }
+            // Another request may have created the ref, or GitHub's reply was lost.
+            // Verify it below; never force-update an existing ref.
+            if verified_publication_head(api, target).await?.is_none() {
+                return Err(e);
+            }
+        }
+    }
+    let head = verified_publication_head(api, target)
+        .await?
+        .ok_or_else(|| {
+            error(
+                409,
+                "The refactor branch is missing. Check GitHub before retrying.",
+            )
+        })?;
+    if let Some(pr) = existing_draft(api, target, &head).await? {
+        return Ok(pr);
+    }
+    require_publication_base(api, target).await?;
+    let result = api.request(Method::POST, github_url(target.repo, &["pulls"])?,
+        Some(json!({"title":"refactor: simplify scoped code with Buzz", "head":target.branch, "base":target.base_branch, "body":body, "draft":true}))).await;
+    match result {
+        Ok(pr) => draft_outcome(&pr, target, &head),
+        Err(e) => {
+            if e.status == 409 || e.status >= 500 {
+                if let Some(pr) = existing_draft(api, target, &head).await? {
+                    return Ok(pr);
+                }
+            }
+            Err(error(e.status, format!("Branch {} is ready, but draft PR publication could not be confirmed: {}. Check GitHub; retrying this reviewed patch will reuse its matching branch/PR.", target.branch, e.message)))
+        }
+    }
+}
+
 async fn publish(
     client: &Client,
     token: &str,
@@ -839,12 +1050,6 @@ async fn publish(
 ) -> Result<Value> {
     if proposal.edits.is_empty() {
         return Err(error(400, "There is no change to publish."));
-    }
-    if branch_head(client, token, &claims.repo, &claims.branch).await? != claims.commit_sha {
-        return Err(error(
-            409,
-            "The repository changed since review. Generate a fresh proposal.",
-        ));
     }
     let originals = read_sources(client, token, &claims.repo, claims.files.clone()).await?;
     let changed_lines = validate_proposal(
@@ -889,29 +1094,19 @@ async fn publish(
     let tree_sha = updated["sha"]
         .as_str()
         .ok_or_else(|| error(502, "GitHub did not return the proposed tree."))?;
-    let created = github(client, token, Method::POST, github_url(&claims.repo, &["git", "commits"])?, Some(json!({"message":"refactor: simplify scoped code with Buzz","tree":tree_sha,"parents":[claims.commit_sha]}))).await?;
-    let commit_sha = created["sha"]
-        .as_str()
-        .ok_or_else(|| error(502, "GitHub did not return the proposed commit."))?;
     let branch = format!(
         "buzz/refactor-{}",
         &hash(&format!("{}:{}", claims.commit_sha, tree_sha))[..16]
     );
-    if branch_head(client, token, &claims.repo, &claims.branch).await? != claims.commit_sha {
-        return Err(error(409, "The base branch moved during publication. Generate a fresh proposal; no branch was opened."));
-    }
-    github(
-        client,
-        token,
-        Method::POST,
-        github_url(&claims.repo, &["git", "refs"])?,
-        Some(json!({"ref":format!("refs/heads/{branch}"),"sha":commit_sha})),
-    )
-    .await?;
     let body = format!("## Refactoring proposal\n\n{}\n\n### Guidance followed\n{}\n\n### Trade-offs\n{}\n\n### Validation\n**UNVERIFIED: Buzz has not executed this repository's build or tests.** Review this draft and run your existing CI before merging. Passing CI is not proof of behavior preservation.\n\nScope: {} file(s), {} changed lines. Base: `{}`. Rules digest: `{}`.\n", proposal.summary, proposal.rule, proposal.tradeoffs, proposal.edits.len(), changed_lines, claims.commit_sha, claims.rules_hash);
-    let pr = github(client, token, Method::POST, github_url(&claims.repo, &["pulls"])?, Some(json!({"title":"refactor: simplify scoped code with Buzz","head":branch,"base":claims.branch,"body":body,"draft":true}))).await
-        .map_err(|e| error(e.status, format!("Branch {branch} was created, but the draft PR was not: {}. You can inspect/open it on GitHub.", e.message)))?;
-    Ok(json!({"url":pr["html_url"],"branch":branch,"draft":true,"validation":"unverified"}))
+    let publication = DraftPublication {
+        repo: &claims.repo,
+        branch: &branch,
+        base_branch: &claims.branch,
+        base_sha: &claims.commit_sha,
+        tree_sha,
+    };
+    publish_draft(&ConnectedGitHub { client, token }, &publication, &body).await
 }
 
 #[cfg(test)]
@@ -1064,6 +1259,363 @@ mod tests {
             url.as_str(),
             "https://api.github.com/repos/owner/repo/git/ref/heads/feature%20name"
         );
+    }
+
+    #[test]
+    fn guidance_is_only_loaded_as_explicit_selected_context() {
+        let entries = [
+            "AGENTS.md",
+            "README.md",
+            "Cargo.toml",
+            "package.json",
+            "src/value.ts",
+        ]
+        .map(
+            |path| json!({"path": path, "type": "blob", "mode": "100644", "size": 20, "sha": path}),
+        );
+        let tree = json!({"tree": entries});
+        let files = vec!["src/value.ts".to_string()];
+        assert!(selected_context(&tree, &files, &[]).unwrap().is_empty());
+        let explicit = selected_context(&tree, &files, &["AGENTS.md".into()]).unwrap();
+        assert_eq!(explicit.len(), 1);
+        assert_eq!(explicit[0].path, "AGENTS.md");
+        let selected: Vec<String> = ["README.md", "Cargo.toml", "package.json"]
+            .map(str::to_string)
+            .into();
+        let context = selected_context(&tree, &files, &selected).unwrap();
+        assert_eq!(context.len(), 3);
+        assert!(context.iter().all(|file| file.path != "AGENTS.md"));
+        let mut too_many = selected;
+        too_many.push("AGENTS.md".into());
+        assert!(selected_context(&tree, &files, &too_many).is_err());
+        assert!(selected_context(&tree, &files, &files).is_err());
+    }
+
+    type Reply = (&'static str, &'static str, Result<Value>);
+
+    struct FakeGitHub {
+        replies: std::cell::RefCell<std::collections::VecDeque<Reply>>,
+        writes: std::cell::RefCell<Vec<(String, Value)>>,
+    }
+
+    impl FakeGitHub {
+        fn new(replies: Vec<Reply>) -> Self {
+            Self {
+                replies: std::cell::RefCell::new(replies.into()),
+                writes: Default::default(),
+            }
+        }
+        fn complete(&self) {
+            assert!(
+                self.replies.borrow().is_empty(),
+                "Expected GitHub calls were not made"
+            );
+        }
+    }
+
+    impl GitHubApi for FakeGitHub {
+        async fn request(&self, method: Method, url: Url, body: Option<Value>) -> Result<Value> {
+            let (expected_method, expected_path, result) = self
+                .replies
+                .borrow_mut()
+                .pop_front()
+                .expect("Unexpected GitHub call");
+            assert_eq!(method.as_str(), expected_method);
+            assert_eq!(url.path(), format!("/repos/owner/repo/{expected_path}"));
+            if method == Method::GET {
+                assert!(body.is_none());
+                if expected_path == "pulls" {
+                    let query: std::collections::HashMap<_, _> =
+                        url.query_pairs().into_owned().collect();
+                    assert_eq!(query["head"], "owner:buzz/refactor-reviewed");
+                    assert!(
+                        !query.contains_key("base"),
+                        "Retargeted PRs must remain visible"
+                    );
+                    assert_eq!(query["state"], "all");
+                }
+            } else {
+                assert_eq!(
+                    method,
+                    Method::POST,
+                    "Never overwrite an existing ref or PR"
+                );
+                self.writes
+                    .borrow_mut()
+                    .push((expected_path.to_string(), body.unwrap()));
+            }
+            result
+        }
+    }
+
+    fn target() -> DraftPublication<'static> {
+        DraftPublication {
+            repo: "owner/repo",
+            branch: "buzz/refactor-reviewed",
+            base_branch: "main",
+            base_sha: "base",
+            tree_sha: "patched-tree",
+        }
+    }
+    fn patch_head() -> Reply {
+        (
+            "GET",
+            "git/ref/heads/buzz/refactor-reviewed",
+            Ok(json!({"object": {"sha": "patch"}})),
+        )
+    }
+    fn patch_commit() -> Reply {
+        (
+            "GET",
+            "git/commits/patch",
+            Ok(
+                json!({"sha": "patch", "tree": {"sha": "patched-tree"}, "parents": [{"sha": "base"}]}),
+            ),
+        )
+    }
+    fn base_head() -> Reply {
+        (
+            "GET",
+            "git/ref/heads/main",
+            Ok(json!({"object": {"sha": "base"}})),
+        )
+    }
+    fn draft() -> Value {
+        json!({"html_url": "https://github.com/owner/repo/pull/1", "state": "open", "draft": true,
+            "head": {"ref": "buzz/refactor-reviewed", "sha": "patch", "repo": {"full_name": "owner/repo"}},
+            "base": {"ref": "main", "repo": {"full_name": "owner/repo"}}})
+    }
+
+    #[tokio::test]
+    async fn retry_resumes_matching_branch_after_partial_publication() {
+        let api = FakeGitHub::new(vec![
+            patch_head(),
+            patch_commit(),
+            ("GET", "pulls", Ok(json!([]))),
+            patch_head(),
+            patch_commit(),
+            ("GET", "pulls", Ok(json!([]))),
+            base_head(),
+            ("POST", "pulls", Ok(draft())),
+        ]);
+        let result = publish_draft(&api, &target(), "review body").await.unwrap();
+        assert_eq!(result["url"], "https://github.com/owner/repo/pull/1");
+        api.complete();
+        let writes = api.writes.borrow();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(
+            writes[0],
+            (
+                "pulls".into(),
+                json!({"title": "refactor: simplify scoped code with Buzz", "head": "buzz/refactor-reviewed", "base": "main", "body": "review body", "draft": true})
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_recovers_lost_success_without_new_writes_or_base_check() {
+        let api = FakeGitHub::new(vec![
+            patch_head(),
+            patch_commit(),
+            ("GET", "pulls", Ok(json!([draft()]))),
+        ]);
+        let result = publish_draft(&api, &target(), "review body").await.unwrap();
+        assert_eq!(result["draft"], true);
+        assert_eq!(result["validation"], "unverified");
+        api.complete();
+        assert!(api.writes.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn retry_never_overwrites_a_mismatched_branch() {
+        for commit in [
+            json!({"sha": "patch", "tree": {"sha": "different-tree"}, "parents": [{"sha": "base"}]}),
+            json!({"sha": "patch", "tree": {"sha": "patched-tree"}, "parents": [{"sha": "different-base"}]}),
+            json!({"sha": "patch", "tree": {"sha": "patched-tree"}, "parents": [{"sha": "base"}, {"sha": "extra"}]}),
+        ] {
+            let api = FakeGitHub::new(vec![patch_head(), ("GET", "git/commits/patch", Ok(commit))]);
+            assert_eq!(
+                publish_draft(&api, &target(), "body")
+                    .await
+                    .unwrap_err()
+                    .status,
+                409
+            );
+            api.complete();
+            assert!(api.writes.borrow().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_closed_or_changed_pr_is_not_reopened_or_duplicated() {
+        for (field, value) in [("state", json!("closed")), ("draft", json!(false))] {
+            let mut pr = draft();
+            pr[field] = value;
+            let api = FakeGitHub::new(vec![
+                patch_head(),
+                patch_commit(),
+                ("GET", "pulls", Ok(json!([pr]))),
+            ]);
+            assert_eq!(
+                publish_draft(&api, &target(), "body")
+                    .await
+                    .unwrap_err()
+                    .status,
+                409
+            );
+            api.complete();
+            assert!(api.writes.borrow().is_empty());
+        }
+        let mut moved = draft();
+        moved["head"]["sha"] = json!("other");
+        assert!(draft_outcome(&moved, &target(), "patch").is_err());
+        let mut fork = draft();
+        fork["head"]["repo"]["full_name"] = json!("other/repo");
+        assert!(draft_outcome(&fork, &target(), "patch").is_err());
+        let mut retargeted = draft();
+        retargeted["base"]["ref"] = json!("release");
+        let api = FakeGitHub::new(vec![
+            patch_head(),
+            patch_commit(),
+            ("GET", "pulls", Ok(json!([retargeted]))),
+        ]);
+        assert_eq!(
+            publish_draft(&api, &target(), "body")
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        api.complete();
+        assert!(api.writes.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn new_publication_verifies_branch_before_opening_draft() {
+        let api = FakeGitHub::new(vec![
+            (
+                "GET",
+                "git/ref/heads/buzz/refactor-reviewed",
+                Err(error(404, "missing")),
+            ),
+            base_head(),
+            ("POST", "git/commits", Ok(json!({"sha": "patch"}))),
+            base_head(),
+            ("POST", "git/refs", Ok(json!({}))),
+            patch_head(),
+            patch_commit(),
+            ("GET", "pulls", Ok(json!([]))),
+            base_head(),
+            ("POST", "pulls", Ok(draft())),
+        ]);
+        publish_draft(&api, &target(), "body").await.unwrap();
+        api.complete();
+        let writes = api.writes.borrow();
+        assert_eq!(writes.len(), 3);
+        assert_eq!(writes[0].1["parents"], json!(["base"]));
+        assert_eq!(writes[0].1["tree"], "patched-tree");
+        assert_eq!(
+            writes[1].1,
+            json!({"ref": "refs/heads/buzz/refactor-reviewed", "sha": "patch"})
+        );
+        assert_eq!(writes[2].1["draft"], true);
+    }
+
+    #[tokio::test]
+    async fn concurrent_or_lost_ref_creation_recovers_only_verified_branch() {
+        for status in [409, 502] {
+            let api = FakeGitHub::new(vec![
+                (
+                    "GET",
+                    "git/ref/heads/buzz/refactor-reviewed",
+                    Err(error(404, "missing")),
+                ),
+                base_head(),
+                ("POST", "git/commits", Ok(json!({"sha": "patch"}))),
+                base_head(),
+                (
+                    "POST",
+                    "git/refs",
+                    Err(error(status, "uncertain ref creation")),
+                ),
+                patch_head(),
+                patch_commit(),
+                patch_head(),
+                patch_commit(),
+                ("GET", "pulls", Ok(json!([draft()]))),
+            ]);
+            publish_draft(&api, &target(), "body").await.unwrap();
+            api.complete();
+            assert_eq!(api.writes.borrow().len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_or_lost_pr_creation_recovers_existing_draft() {
+        for status in [409, 502] {
+            let api = FakeGitHub::new(vec![
+                patch_head(),
+                patch_commit(),
+                ("GET", "pulls", Ok(json!([]))),
+                patch_head(),
+                patch_commit(),
+                ("GET", "pulls", Ok(json!([]))),
+                base_head(),
+                ("POST", "pulls", Err(error(status, "uncertain PR creation"))),
+                ("GET", "pulls", Ok(json!([draft()]))),
+            ]);
+            publish_draft(&api, &target(), "body").await.unwrap();
+            api.complete();
+            assert_eq!(api.writes.borrow().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn partial_publication_cannot_open_pr_after_base_moves() {
+        let api = FakeGitHub::new(vec![
+            patch_head(),
+            patch_commit(),
+            ("GET", "pulls", Ok(json!([]))),
+            patch_head(),
+            patch_commit(),
+            ("GET", "pulls", Ok(json!([]))),
+            (
+                "GET",
+                "git/ref/heads/main",
+                Ok(json!({"object": {"sha": "moved"}})),
+            ),
+        ]);
+        assert_eq!(
+            publish_draft(&api, &target(), "body")
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        api.complete();
+        assert!(api.writes.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_pr_creation_leaves_matching_branch_available_for_retry() {
+        let api = FakeGitHub::new(vec![
+            patch_head(),
+            patch_commit(),
+            ("GET", "pulls", Ok(json!([]))),
+            patch_head(),
+            patch_commit(),
+            ("GET", "pulls", Ok(json!([]))),
+            base_head(),
+            ("POST", "pulls", Err(error(502, "GitHub unavailable"))),
+            ("GET", "pulls", Ok(json!([]))),
+        ]);
+        let err = publish_draft(&api, &target(), "body").await.unwrap_err();
+        assert_eq!(err.status, 502);
+        assert!(err
+            .message
+            .contains("retrying this reviewed patch will reuse"));
+        api.complete();
+        assert_eq!(api.writes.borrow().len(), 1);
     }
 
     #[test]

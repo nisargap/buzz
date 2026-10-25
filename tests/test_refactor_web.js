@@ -226,6 +226,38 @@ test('server-protected files remain selectable only as read-only context', async
   assert.equal(context.checked, true);
 });
 
+test('repository guidance is optional and uploaded only when explicitly selected', async () => {
+  assert.match(html, /Repository guidance such as AGENTS\.md is sent only if I select it/);
+  for (const selected of [false, true]) {
+    const view = await ready({ files: [{ path: 'src/a.js', size: 50, editable: true }, { path: 'AGENTS.md', size: 100, editable: false }] });
+    assert.equal(view.get('context-files').children[1].children[0].checked, false);
+    view.select('files', 0);
+    if (selected) view.select('context-files', 1);
+    view.check('consent');
+    view.click('generate-btn');
+    const body = JSON.parse(view.requests[1].options.body);
+    assert.deepEqual(body.context_files, selected ? ['AGENTS.md'] : []);
+  }
+});
+
+test('a publication failure can retry the exact reviewed patch with renewed approval', async () => {
+  const view = await generated();
+  view.check('approve');
+  view.click('publish-btn');
+  const first = view.requests[2].options.body;
+  view.requests[2].resolve({ error: 'Branch is ready; retry to recover the draft PR.' }, 502);
+  await settle();
+  assert.equal(view.get('review').hidden, false);
+  assert.equal(view.get('approve').checked, false);
+  assert.equal(view.get('publish-btn').disabled, true);
+  view.check('approve');
+  view.click('publish-btn');
+  assert.equal(view.requests[3].options.body, first);
+  view.requests[3].resolve({ url: 'https://github.com/acme/buzz/pull/10', branch: 'refactor/review', draft: true, validation: 'unverified' });
+  await settle();
+  assert.equal(view.get('published').children[1].href, 'https://github.com/acme/buzz/pull/10');
+});
+
 test('loads through existing session, applies defaults, and requires scope plus consent', async () => {
   const view = fixture();
   assert.equal(view.get('max-files').value, '3');

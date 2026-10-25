@@ -1,5 +1,5 @@
 use buzz::{
-    fetch_cves, fetch_repo_snapshot, generate_codebase_diagram, persist_scan_report,
+    fetch_cves, fetch_repo_snapshot, generate_codebase_diagram, is_uuid, persist_scan_report,
     run_gemini_argon_audit, templates, AppConfig,
 };
 use reqwest::Client;
@@ -54,7 +54,7 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
             .body(Body::Text(unauthorized_html.to_string()))?);
     }
 
-    let (repo_opt, include_diagram) = extract_params_from_body(req.body());
+    let (repo_opt, include_diagram, job_id) = extract_params_from_body(req.body());
     let repo_target = repo_opt.unwrap_or_else(|| "nisargap/buzz".to_string());
 
     // 1. Fetch repository files from GitHub
@@ -82,6 +82,7 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
         &mut report,
         user_id.as_deref(),
         gh_user.as_deref(),
+        job_id.as_deref(),
     )
     .await;
 
@@ -94,15 +95,16 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
         .body(Body::Text(html))?)
 }
 
-fn extract_params_from_body(body: &Body) -> (Option<String>, bool) {
+fn extract_params_from_body(body: &Body) -> (Option<String>, bool, Option<String>) {
     let raw_bytes: &[u8] = match body {
         Body::Text(s) => s.as_bytes(),
         Body::Binary(b) => b.as_slice(),
-        Body::Empty => return (None, false),
+        Body::Empty => return (None, false, None),
     };
 
     let mut repo_val = None;
     let mut include_diagram = false;
+    let mut job_id = None;
 
     for (k, v) in form_urlencoded::parse(raw_bytes) {
         if k == "repo" && !v.trim().is_empty() {
@@ -110,6 +112,8 @@ fn extract_params_from_body(body: &Body) -> (Option<String>, bool) {
         } else if k == "include_diagram" {
             let low = v.trim().to_ascii_lowercase();
             include_diagram = low == "true" || low == "on" || low == "1";
+        } else if k == "job_id" && is_uuid(v.trim()) {
+            job_id = Some(v.trim().to_string());
         }
     }
 
@@ -126,5 +130,5 @@ fn extract_params_from_body(body: &Body) -> (Option<String>, bool) {
         }
     }
 
-    (repo_val, include_diagram)
+    (repo_val, include_diagram, job_id)
 }

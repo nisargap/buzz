@@ -317,6 +317,7 @@
             hx-post="/api/analyze"
             hx-target="#report-container"
             hx-swap="innerHTML"
+            hx-on::config-request="window.buzzConfigureAnalyzeRequest(event)"
             hx-on::before-request="window.buzzStartAnalysisPage(event)"
             hx-on::after-request="window.buzzFinishAnalysisPage(event)"
           >
@@ -1141,6 +1142,185 @@
         }
       }
 
+      // Analysis job state — survives tab switches, reloads, and navigating away.
+      // Each audit gets a client-generated UUID that the server saves the scan under, so a page
+      // that lost the original request can find the finished report via /api/scans?id=<job>.
+      const PENDING_ANALYSIS_KEY = 'buzz_pending_analysis';
+      const RESUME_WINDOW_MS = 150000; // Vercel maxDuration (60s) + GitHub fetch / persist headroom
+      const STALE_JOB_MS = 24 * 60 * 60 * 1000;
+      let analysisInFlight = false;
+      let analysisResuming = false;
+      let pageIsUnloading = false;
+      let resumeLoopId = 0;
+      let initialViewRestored = false;
+
+      function newJobId() {
+        if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+          const r = (Math.random() * 16) | 0;
+          return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+        });
+      }
+
+      function readPendingAnalysis() {
+        try {
+          const job = JSON.parse(localStorage.getItem(PENDING_ANALYSIS_KEY) || 'null');
+          if (job && job.startedAt && Date.now() - job.startedAt < STALE_JOB_MS) return job;
+        } catch (_) {}
+        localStorage.removeItem(PENDING_ANALYSIS_KEY);
+        return null;
+      }
+
+      function setPendingAnalysis(job) {
+        localStorage.setItem(PENDING_ANALYSIS_KEY, JSON.stringify(job));
+      }
+
+      function clearPendingAnalysis() {
+        localStorage.removeItem(PENDING_ANALYSIS_KEY);
+        analysisResuming = false;
+        resumeLoopId += 1; // stops any resume poller
+      }
+
+      function isAnalysisActive() {
+        return analysisInFlight || analysisResuming;
+      }
+
+      function delay(ms) {
+        return new Promise(function (resolve) {
+          setTimeout(resolve, ms);
+        });
+      }
+
+      function showAnalysisError(message) {
+        stopAllAnalysisTimers();
+        window.buzzGoToStep(2);
+        const selectedNameEl = document.getElementById('selected-repo-name');
+        if (selectedNameEl) {
+          selectedNameEl.style.color = 'var(--sev-critical)';
+          selectedNameEl.textContent = message;
+        }
+      }
+
+      function showRestoredReport(html, isDiagram) {
+        const reportContainer = document.getElementById('report-container');
+        if (reportContainer) {
+          reportContainer.innerHTML = html;
+          if (window.htmx) window.htmx.process(reportContainer);
+        }
+        clearPendingAnalysis();
+        stopAllAnalysisTimers();
+        if (isDiagram) window.buzzSwitchReportTab('diagram');
+        persistActiveReportState();
+        window.buzzGoToStep(4);
+        if (githubUserHandle || githubProviderToken || supabaseUserId) {
+          window.buzzRefreshSavedAudits();
+        }
+      }
+
+      // Re-attach to an audit whose request this page no longer owns: poll for the saved scan
+      // until it lands or the job can no longer be running.
+      async function resumePendingAnalysis(job) {
+        const myLoop = ++resumeLoopId;
+        analysisResuming = true;
+        stopAllAnalysisTimers();
+        window.buzzGoToStep(3, true);
+
+        const repoLabel = (job.repo || '').toUpperCase();
+        const headingEl = document.getElementById('analyzing-repo-heading');
+        const streamEl = document.getElementById('context-stream-file');
+        if (headingEl) {
+          headingEl.textContent =
+            (job.kind === 'diagram' ? 'MAPPING ARCHITECTURE // ' : 'AUDITING ') + repoLabel;
+        }
+        if (streamEl) {
+          streamEl.textContent = 'RECONNECTING — GEMINI 4 ARGON IS STILL WORKING ON THIS ' +
+            (job.kind === 'diagram' ? 'DIAGRAM...' : 'AUDIT...');
+        }
+
+        if (!job.jobId) {
+          // Nothing to poll for (diagram of an unsaved report) — return to the report as it was
+          clearPendingAnalysis();
+          const reportContainer = document.getElementById('report-container');
+          window.buzzGoToStep(reportContainer && reportContainer.innerHTML.trim() ? 4 : 2);
+          return;
+        }
+
+        const scanUrl = '/api/scans?id=' + encodeURIComponent(job.jobId);
+        const isReady = function (html) {
+          return job.kind === 'diagram'
+            ? html.indexOf('mermaid-snake-row') !== -1
+            : html.indexOf('report-header-card') !== -1;
+        };
+        const fetchScanHtml = async function () {
+          try {
+            const res = await fetch(scanUrl, { headers: getAuthHeaders() });
+            return res.ok ? await res.text() : '';
+          } catch (_) {
+            return '';
+          }
+        };
+
+        while (myLoop === resumeLoopId) {
+          let html = await fetchScanHtml();
+          if (myLoop !== resumeLoopId) return;
+          if (isReady(html)) {
+            if (job.kind !== 'diagram') {
+              // Findings rows are written just after the scan row — re-read once so none are missing
+              await delay(1500);
+              const again = await fetchScanHtml();
+              if (myLoop !== resumeLoopId) return;
+              if (isReady(again)) html = again;
+            }
+            showRestoredReport(html, job.kind === 'diagram');
+            return;
+          }
+          if (Date.now() - job.startedAt > RESUME_WINDOW_MS) {
+            clearPendingAnalysis();
+            if (job.kind === 'diagram') {
+              window.buzzLoadSavedScan(job.jobId);
+            } else {
+              showAnalysisError(
+                '⚠ The audit of ' + (job.repo || 'this repository') +
+                  ' was interrupted before it finished. Please run it again.'
+              );
+            }
+            return;
+          }
+          await delay(3000);
+        }
+      }
+
+      window.buzzConfigureAnalyzeRequest = function (event) {
+        const params = event.detail.parameters;
+        // Use the dropdown choice for both the request and the saved job (before-request is too late to change params)
+        const picker = document.getElementById('gh-repo-picker');
+        if (picker && picker.value && picker.value !== '__custom__') {
+          params['repo'] = picker.value;
+        }
+        const jobId = newJobId();
+        params['job_id'] = jobId;
+        clearPendingAnalysis();
+        setPendingAnalysis({
+          kind: 'audit',
+          jobId: jobId,
+          repo: String(params['repo'] || '').trim(),
+          startedAt: Date.now()
+        });
+        analysisInFlight = true;
+      };
+
+      // pagehide fires only when the page really goes away (not for a cancelled beforeunload)
+      window.addEventListener('pagehide', function () {
+        pageIsUnloading = true;
+      });
+      window.addEventListener('pageshow', function (event) {
+        pageIsUnloading = false;
+        if (event.persisted && !analysisInFlight && !analysisResuming) {
+          const job = readPendingAnalysis();
+          if (job) resumePendingAnalysis(job);
+        }
+      });
+
       // 3. Exact Repository File Filter (matches src/lib.rs is_auditable_source_path)
       function isAuditableSourcePath(path) {
         const lower = path.toLowerCase();
@@ -1280,6 +1460,8 @@
       window.buzzStartAnalysisPage = async function (event, options) {
         if (!(githubUserHandle || githubProviderToken || supabaseUserId)) {
           if (event && event.preventDefault) event.preventDefault();
+          clearPendingAnalysis();
+          analysisInFlight = false;
           await window.buzzConnectGitHub();
           return;
         }
@@ -1312,6 +1494,8 @@
 
         if (!rawRepo) {
           if (event && event.preventDefault) event.preventDefault();
+          clearPendingAnalysis();
+          analysisInFlight = false;
           const selectedNameEl = document.getElementById('selected-repo-name');
           if (selectedNameEl) {
             selectedNameEl.style.color = 'var(--sev-critical)';
@@ -1521,9 +1705,18 @@
       window.buzzGenerateDiagramForAudit = async function (scanId, repoFullName) {
         const cleanRepo = (repoFullName || localStorage.getItem('buzz_selected_repo') || 'nisargap/buzz').trim();
         const startedAt = Date.now();
+        const job = { kind: 'diagram', jobId: scanId || '', repo: cleanRepo, startedAt: startedAt };
+        clearPendingAnalysis();
+        setPendingAnalysis(job);
+        // Still the current job? (false once cancelled or superseded by another run)
+        const isCurrentJob = function () {
+          const current = readPendingAnalysis();
+          return Boolean(current && current.startedAt === startedAt);
+        };
 
         // Launch the Step 3 1M Context Loader -> Artist Buzz Beret & Paintbrush Canvas animation!
         window.buzzStartAnalysisPage(null, { diagramOnly: true, repo: cleanRepo });
+        analysisInFlight = true;
 
         try {
           const params = new URLSearchParams();
@@ -1548,6 +1741,9 @@
             });
           }
 
+          analysisInFlight = false;
+          if (pageIsUnloading || !isCurrentJob()) return;
+          clearPendingAnalysis();
           stopAllAnalysisTimers();
           if (painterTimer) {
             clearInterval(painterTimer);
@@ -1573,11 +1769,15 @@
             window.buzzGoToStep(4);
           }
         } catch (_) {
-          stopAllAnalysisTimers();
-          if (painterTimer) {
-            clearInterval(painterTimer);
-            painterTimer = null;
+          analysisInFlight = false;
+          if (pageIsUnloading || !isCurrentJob()) return;
+          if (job.jobId) {
+            // Connection dropped — the server still saves the diagram onto the scan
+            resumePendingAnalysis(job);
+            return;
           }
+          clearPendingAnalysis();
+          stopAllAnalysisTimers();
           window.buzzGoToStep(4);
         }
       };
@@ -1738,17 +1938,43 @@
       };
 
       window.buzzFinishAnalysisPage = function (event) {
-        stopAllAnalysisTimers();
-        if (event && event.detail && event.detail.successful) {
+        analysisInFlight = false;
+        // Aborted because the page is going away — the saved job resumes when the user returns
+        if (pageIsUnloading) return;
+        const detail = (event && event.detail) || {};
+        if (detail.successful) {
+          clearPendingAnalysis();
+          stopAllAnalysisTimers();
           persistActiveReportState();
           window.buzzGoToStep(4);
           if (githubUserHandle || githubProviderToken || supabaseUserId) {
             window.buzzRefreshSavedAudits();
           }
+          return;
         }
+        const job = readPendingAnalysis();
+        if (!job) {
+          // Cancelled by the user
+          stopAllAnalysisTimers();
+          return;
+        }
+        const status = detail.xhr ? detail.xhr.status : 0;
+        if (status === 0) {
+          // Connection dropped (e.g. tab frozen in the background) — the server may still save the scan
+          resumePendingAnalysis(job);
+          return;
+        }
+        clearPendingAnalysis();
+        showAnalysisError('⚠ The audit failed (HTTP ' + status + '). Please try again.');
       };
 
       window.buzzCancelAnalysis = function () {
+        clearPendingAnalysis();
+        const form = document.getElementById('analyze-form');
+        if (analysisInFlight && form && window.htmx) {
+          window.htmx.trigger(form, 'htmx:abort');
+        }
+        analysisInFlight = false;
         stopAllAnalysisTimers();
         window.buzzGoToStep(2);
       };
@@ -1974,7 +2200,7 @@
                     reportContainer.innerHTML = reportHtml;
                     persistActiveReportState();
                     const savedStep = parseInt(localStorage.getItem('buzz_wizard_step') || '1', 10);
-                    if (savedStep === 4) {
+                    if (savedStep === 4 && !isAnalysisActive()) {
                       window.buzzGoToStep(4, true);
                     }
                   }
@@ -2038,6 +2264,15 @@
         Boolean(urlProviderToken) ||
         window.location.search.indexOf('code=') !== -1 ||
         sessionStorage.getItem('buzz_oauth_pending') === '1';
+
+      // One-shot: after the GitHub OAuth redirect, land on step 2 exactly once
+      let oauthLandingPending = hadOAuthCallbackOnBoot;
+      function consumeOAuthLanding() {
+        const pending = oauthLandingPending || sessionStorage.getItem('buzz_oauth_pending') === '1';
+        oauthLandingPending = false;
+        sessionStorage.removeItem('buzz_oauth_pending');
+        if (pending && !isAnalysisActive()) window.buzzGoToStep(2);
+      }
 
       let supabaseClient = window.supabase
         ? window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY)
@@ -2341,7 +2576,15 @@
           }
         }
 
-        if (!hadOAuthCallbackOnBoot) {
+        // Restore the view once per page load. This also runs on every Supabase SIGNED_IN /
+        // TOKEN_REFRESHED event (fired when the tab regains focus) and must not navigate then.
+        if (initialViewRestored) return;
+        initialViewRestored = true;
+
+        const pendingJob = readPendingAnalysis();
+        if (pendingJob && !isAnalysisActive()) {
+          resumePendingAnalysis(pendingJob);
+        } else if (!hadOAuthCallbackOnBoot) {
           if (savedStep === 4 && (savedReportHtml.trim() || savedScanId)) {
             window.buzzGoToStep(4, true);
             if (savedScanId) {
@@ -2358,7 +2601,7 @@
         restoreBrowserState();
         if (hadOAuthCallbackOnBoot) {
           sessionStorage.removeItem('buzz_oauth_pending');
-          window.buzzGoToStep(2);
+          if (!isAnalysisActive()) window.buzzGoToStep(2);
           if (window.location.hash && window.history && window.history.replaceState) {
             window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
           }
@@ -2387,10 +2630,7 @@
             supabaseClient.auth.onAuthStateChange(function (event, session) {
               if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') && session) {
                 applySupabaseSession(session);
-                if (hadOAuthCallbackOnBoot || sessionStorage.getItem('buzz_oauth_pending') === '1') {
-                  sessionStorage.removeItem('buzz_oauth_pending');
-                  window.buzzGoToStep(2);
-                }
+                consumeOAuthLanding();
               } else if (event === 'SIGNED_OUT') {
                 clearSavedAuth();
                 updateAuthBadge();
@@ -2400,10 +2640,7 @@
             const { data } = await supabaseClient.auth.getSession();
             if (data && data.session) {
               applySupabaseSession(data.session);
-              if (hadOAuthCallbackOnBoot) {
-                sessionStorage.removeItem('buzz_oauth_pending');
-                window.buzzGoToStep(2);
-              }
+              consumeOAuthLanding();
             }
           }
         } catch (_) {}

@@ -1151,6 +1151,16 @@ pub fn compute_canonical_security_metrics(
     (exposure_pct, health_score, grade)
 }
 
+/// True for a canonical 8-4-4-4-12 hex UUID string.
+pub fn is_uuid(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => *c == b'-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
 fn strip_markdown_fences(raw: &str) -> &str {
     let trimmed = raw.trim();
     let without_start = trimmed
@@ -2115,6 +2125,7 @@ pub async fn persist_scan_report(
     report: &mut AuditReport,
     user_id: Option<&str>,
     github_user: Option<&str>,
+    scan_id: Option<&str>,
 ) {
     let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
         return;
@@ -2126,7 +2137,7 @@ pub async fn persist_scan_report(
     let clean_gh_user = github_user.map(|s| s.trim()).filter(|s| !s.is_empty());
 
     let scans_url = format!("{}/rest/v1/scans", base_url.trim_end_matches('/'));
-    let scan_payload = serde_json::json!({
+    let mut scan_payload = serde_json::json!({
         "user_id": clean_uid,
         "github_user": clean_gh_user,
         "repo_full_name": report.repo_full_name,
@@ -2144,16 +2155,31 @@ pub async fn persist_scan_report(
         "cves_checked": report.cves_checked,
         "diagram_json": report.diagram
     });
+    // Client-generated job id lets a page that reloaded mid-audit find this scan afterwards
+    if let Some(id) = scan_id.filter(|id| is_uuid(id)) {
+        scan_payload["id"] = serde_json::json!(id.to_ascii_lowercase());
+    }
 
-    if let Ok(resp) = client
-        .post(&scans_url)
-        .header("apikey", api_key)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Prefer", "return=representation")
-        .json(&scan_payload)
-        .send()
-        .await
-    {
+    let insert_scan = |payload: &serde_json::Value| {
+        client
+            .post(&scans_url)
+            .header("apikey", api_key)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Prefer", "return=representation")
+            .json(payload)
+            .send()
+    };
+    let mut scan_resp = insert_scan(&scan_payload).await;
+    let inserted = matches!(&scan_resp, Ok(r) if r.status().is_success());
+    if !inserted {
+        if let Some(obj) = scan_payload.as_object_mut().filter(|o| o.contains_key("id")) {
+            // Never lose an audit over the client id — retry with a server-generated one
+            obj.remove("id");
+            scan_resp = insert_scan(&scan_payload).await;
+        }
+    }
+
+    if let Ok(resp) = scan_resp {
         if let Ok(rows) = resp.json::<Vec<serde_json::Value>>().await {
             if let Some(scan_id) = rows
                 .first()
@@ -4293,6 +4319,14 @@ mod tests {
     fn test_strip_markdown_fences() {
         let fenced = "```json\n{\"risk_score\": 42}\n```";
         assert_eq!(strip_markdown_fences(fenced), "{\"risk_score\": 42}");
+    }
+
+    #[test]
+    fn test_is_uuid() {
+        assert!(is_uuid("3f2b8c1e-9a4d-4e2f-8b7a-1c2d3e4f5a6b"));
+        assert!(!is_uuid("3f2b8c1e-9a4d-4e2f-8b7a-1c2d3e4f5a6"));
+        assert!(!is_uuid("3f2b8c1e99a4d-4e2f-8b7a-1c2d3e4f5a6b"));
+        assert!(!is_uuid("'; drop table scans; --------------x"));
     }
 
     #[tokio::test]

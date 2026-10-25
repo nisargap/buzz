@@ -13,14 +13,18 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
     let client = Client::new();
 
     if let Some(scan_id) = extract_query_param(&req, "id") {
-        let html = if let Some(report) = fetch_saved_scan_by_id(&client, &config, &scan_id).await {
-            templates::render_audit_report(&report)
+        // 404 lets a page resuming an interrupted audit tell "not saved yet" from a real report
+        let (status, html) = if let Some(report) = fetch_saved_scan_by_id(&client, &config, &scan_id).await {
+            (StatusCode::OK, templates::render_audit_report(&report))
         } else {
-            r#"<div class="pixel-box" style="padding:20px;color:var(--sev-critical);">Saved audit report not found.</div>"#.to_string()
+            (
+                StatusCode::NOT_FOUND,
+                r#"<div class="pixel-box" style="padding:20px;color:var(--sev-critical);">Saved audit report not found.</div>"#.to_string(),
+            )
         };
 
         return Ok(Response::builder()
-            .status(StatusCode::OK)
+            .status(status)
             .header("content-type", "text/html; charset=utf-8")
             .body(Body::Text(html))?);
     }

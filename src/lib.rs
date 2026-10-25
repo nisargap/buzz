@@ -2772,108 +2772,352 @@ pub mod templates {
     };
 
     pub fn render_component_diagram(repo_full_name: &str, diagram: &CodebaseDiagram) -> String {
-        let mut flow_chain_html = String::new();
+        let count = diagram.nodes.len().max(1);
 
-        // Map node IDs to labels & layers for edge lookup
-        for (idx, node) in diagram.nodes.iter().enumerate() {
+        // 2D Constellation Coordinates across the 880x520 Neural Map Canvas
+        let preset_coords: &[(f32, f32)] = match count {
+            1 => &[(440.0, 260.0)],
+            2 => &[(240.0, 260.0), (640.0, 260.0)],
+            3 => &[(195.0, 170.0), (685.0, 170.0), (440.0, 390.0)],
+            4 => &[
+                (190.0, 155.0),
+                (690.0, 145.0),
+                (215.0, 385.0),
+                (665.0, 385.0),
+            ],
+            5 => &[
+                (170.0, 150.0),
+                (440.0, 115.0),
+                (710.0, 150.0),
+                (635.0, 395.0),
+                (245.0, 395.0),
+            ],
+            _ => &[
+                (165.0, 145.0),
+                (440.0, 110.0),
+                (715.0, 145.0),
+                (705.0, 385.0),
+                (440.0, 415.0),
+                (175.0, 385.0),
+            ],
+        };
+
+        let mut node_positions: Vec<(String, f32, f32, u32, &str, &str)> = Vec::new();
+        for (idx, node) in diagram.nodes.iter().take(6).enumerate() {
+            let (cx, cy) = preset_coords[idx % preset_coords.len()];
+            let deg_count = diagram
+                .edges
+                .iter()
+                .filter(|e| e.from == node.id || e.to == node.id)
+                .count() as u32;
             let layer_upper = node.layer.to_uppercase();
-            let layer_class = match layer_upper.as_str() {
-                "FRONTEND" | "UI" | "CLIENT" => "layer-frontend",
-                "API" | "ROUTE" | "ROUTES" => "layer-api",
-                "DATA" | "DB" | "DATABASE" => "layer-data",
-                _ => "layer-core",
+            let base_heat: u32 = match layer_upper.as_str() {
+                "CORE" => 86,
+                "API" | "ROUTE" | "ROUTES" => 82,
+                "DATA" | "DB" | "DATABASE" => 74,
+                _ => 66,
+            };
+            let heat_score = (base_heat + deg_count * 4 + (node.files.len() as u32 * 2)).min(99);
+            let (bloom_id, stroke_hex, heat_class) = match heat_score {
+                88..=100 => ("heat-bloom-critical", "#FF2E63", "heat-critical"),
+                78..=87 => ("heat-bloom-high", "#FF8C32", "heat-high"),
+                68..=77 => ("heat-bloom-warm", "#FFE047", "heat-warm"),
+                _ => ("heat-bloom-cool", "#00F5D4", "heat-cool"),
+            };
+            node_positions.push((node.id.clone(), cx, cy, heat_score, bloom_id, stroke_hex));
+            let _ = heat_class;
+        }
+
+        // 1. SVG Layer 1: Thermal Aura Blooms (fMRI / Infrared Heat Field)
+        let mut svg_heat_blooms = String::new();
+        for (_, cx, cy, heat_score, bloom_id, _) in &node_positions {
+            let bloom_r = 85.0 + (*heat_score as f32 * 0.55);
+            svg_heat_blooms.push_str(&format!(
+                r##"<circle class="neural-aura-pulse" cx="{cx:.1}" cy="{cy:.1}" r="{r:.1}" fill="url(#{bloom_id})" filter="url(#thermal-glow)" />"##,
+                cx = cx,
+                cy = cy,
+                r = bloom_r,
+                bloom_id = bloom_id
+            ));
+        }
+
+        // 2. SVG Layer 2: Curved Bezier Synaptic Axons & Directional Action-Potential Pulses
+        let mut svg_axons = String::new();
+        let mut effective_edges = diagram.edges.clone();
+        if effective_edges.is_empty() && diagram.nodes.len() >= 2 {
+            for win in diagram.nodes.windows(2) {
+                effective_edges.push(super::DiagramEdge {
+                    from: win[0].id.clone(),
+                    to: win[1].id.clone(),
+                    label: "Synaptic Dataflow".to_string(),
+                });
+            }
+        }
+
+        for (e_idx, edge) in effective_edges.iter().enumerate() {
+            let Some((_, x1, y1, _, _, _)) =
+                node_positions.iter().find(|(id, ..)| *id == edge.from)
+            else {
+                continue;
+            };
+            let Some((_, x2, y2, _, _, _)) =
+                node_positions.iter().find(|(id, ..)| *id == edge.to)
+            else {
+                continue;
             };
 
+            let dx = *x2 - *x1;
+            let dy = *y2 - *y1;
+            let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+            let ux = dx / dist;
+            let uy = dy / dist;
+
+            // Start at outer rim of source node (32px) and end at outer rim of target node (38px)
+            let sx = *x1 + ux * 32.0;
+            let sy = *y1 + uy * 32.0;
+            let ex = *x2 - ux * 38.0;
+            let ey = *y2 - uy * 38.0;
+
+            // Perpendicular curve offset for organic neural axon look
+            let nx = -uy;
+            let ny = ux;
+            let bend = if e_idx % 2 == 0 { 34.0 } else { -34.0 };
+            let qx = (*x1 + *x2) * 0.5 + nx * bend;
+            let qy = (*y1 + *y2) * 0.5 + ny * bend;
+
+            // Midpoint on quadratic Bezier (t = 0.5) for label badge
+            let mx = 0.25 * sx + 0.5 * qx + 0.25 * ex;
+            let my = 0.25 * sy + 0.5 * qy + 0.25 * ey;
+
+            let short_label: String = edge.label.chars().take(28).collect();
+            let badge_w = (short_label.len() as f32 * 6.4 + 16.0).max(64.0);
+            let bx = mx - badge_w * 0.5;
+            let by = my - 10.0;
+
+            svg_axons.push_str(&format!(
+                r##"<g class="neural-synapse-group">
+                    <path d="M {sx:.1} {sy:.1} Q {qx:.1} {qy:.1} {ex:.1} {ey:.1}" fill="none" stroke="#FF2E63" stroke-width="6" opacity="0.26" filter="url(#synapse-glow)" />
+                    <path d="M {sx:.1} {sy:.1} Q {qx:.1} {qy:.1} {ex:.1} {ey:.1}" fill="none" stroke="url(#synapse-grad)" stroke-width="2.4" marker-end="url(#neural-arrow)" />
+                    <path class="synapse-axon-pulse" d="M {sx:.1} {sy:.1} Q {qx:.1} {qy:.1} {ex:.1} {ey:.1}" fill="none" stroke="#FFF7D6" stroke-width="2.2" />
+                    <rect x="{bx:.1}" y="{by:.1}" width="{bw:.1}" height="19" rx="2" fill="#090418" stroke="#9D4EDD" stroke-width="1.5" opacity="0.92" />
+                    <text x="{mx:.1}" y="{ty:.1}" text-anchor="middle" fill="#FFE047" font-family="JetBrains Mono, monospace" font-size="9.5">{label}</text>
+                </g>"##,
+                sx = sx,
+                sy = sy,
+                qx = qx,
+                qy = qy,
+                ex = ex,
+                ey = ey,
+                bx = bx,
+                by = by,
+                bw = badge_w,
+                mx = mx,
+                ty = my + 3.0,
+                label = escape_html(&short_label)
+            ));
+        }
+
+        // 3. SVG Layer 3 & 4: Satellite File Neurons (Dendrites) + Major Neural Hub Cores
+        let mut svg_dendrites = String::new();
+        let mut svg_hubs = String::new();
+        let mut summary_cards_html = String::new();
+
+        let sat_angles: [f32; 5] = [-2.35, -1.15, 0.35, 1.25, 2.45];
+
+        for (idx, node) in diagram.nodes.iter().take(6).enumerate() {
+            let (_, cx, cy, heat_score, _, stroke_hex) = node_positions[idx];
+            let heat_class = match heat_score {
+                88..=100 => "heat-critical",
+                78..=87 => "heat-high",
+                68..=77 => "heat-warm",
+                _ => "heat-cool",
+            };
+
+            // Render satellite file neurons around this hub
             let mut file_pills = String::new();
-            for fp in node.files.iter().take(6) {
+            for (f_idx, fp) in node.files.iter().take(5).enumerate() {
                 file_pills.push_str(&format!(
                     r#"<span class="diag-file-pill">{f}</span>"#,
                     f = escape_html(fp)
                 ));
+
+                let angle = sat_angles[f_idx % sat_angles.len()] + (idx as f32 * 0.35);
+                let sat_dist = 66.0;
+                let fx = (cx + angle.cos() * sat_dist).clamp(48.0, 832.0);
+                let fy = (cy + angle.sin() * sat_dist).clamp(32.0, 488.0);
+                let short_file = fp.rsplit('/').next().unwrap_or(fp.as_str());
+                let short_file_trunc: String = short_file.chars().take(16).collect();
+
+                svg_dendrites.push_str(&format!(
+                    r##"<g class="file-dendrite-node">
+                        <line x1="{cx:.1}" y1="{cy:.1}" x2="{fx:.1}" y2="{fy:.1}" stroke="{stroke}" stroke-width="1.3" stroke-dasharray="3 3" opacity="0.65" />
+                        <circle cx="{fx:.1}" cy="{fy:.1}" r="12" fill="{stroke}" opacity="0.18" />
+                        <circle cx="{fx:.1}" cy="{fy:.1}" r="4.5" fill="#FFF7D6" stroke="{stroke}" stroke-width="1.8" />
+                        <text x="{fx:.1}" y="{ty:.1}" text-anchor="middle" fill="#D9E6FF" font-family="JetBrains Mono, monospace" font-size="8.5">{fname}</text>
+                    </g>"##,
+                    cx = cx,
+                    cy = cy,
+                    fx = fx,
+                    fy = fy,
+                    stroke = stroke_hex,
+                    ty = fy - 8.0,
+                    fname = escape_html(&short_file_trunc)
+                ));
             }
 
-            // Find outgoing edges from this node (or sequential arrow to next component)
-            let outgoing: Vec<String> = diagram
-                .edges
-                .iter()
-                .filter(|e| e.from == node.id)
-                .map(|e| {
-                    let target_label = diagram
-                        .nodes
-                        .iter()
-                        .find(|n| n.id == e.to)
-                        .map(|n| n.label.as_str())
-                        .unwrap_or(e.to.as_str());
-                    if e.label.trim().is_empty() {
-                        format!("Flows to {}", target_label)
-                    } else {
-                        format!("{} ➔ {}", e.label, target_label)
-                    }
-                })
-                .collect();
+            let layer_upper = node.layer.to_uppercase();
+            let short_title: String = node.label.chars().take(24).collect();
+            let label_w = (short_title.len() as f32 * 7.2 + 20.0).max(110.0);
+            let lx = cx - label_w * 0.5;
+            let ly = cy + 34.0;
 
-            let edge_caption = if !outgoing.is_empty() {
-                outgoing.join("  •  ")
-            } else if let Some(next_node) = diagram.nodes.get(idx + 1) {
-                format!("Component Flow ➔ {}", next_node.label)
-            } else {
-                String::new()
-            };
+            svg_hubs.push_str(&format!(
+                r##"<g class="neural-hub-node">
+                    <circle class="neural-ring-spin" cx="{cx:.1}" cy="{cy:.1}" r="33" fill="none" stroke="{stroke}" stroke-width="1.8" opacity="0.85" />
+                    <circle cx="{cx:.1}" cy="{cy:.1}" r="25" fill="#0B0418" stroke="{stroke}" stroke-width="3" />
+                    <circle cx="{cx:.1}" cy="{cy:.1}" r="9" fill="{stroke}" opacity="0.35" />
+                    <text x="{cx:.1}" y="{cy_top:.1}" text-anchor="middle" fill="#FFF7D6" font-family="Press Start 2P, monospace" font-size="8.5">{heat}°</text>
+                    <text x="{cx:.1}" y="{cy_bot:.1}" text-anchor="middle" fill="{stroke}" font-family="JetBrains Mono, monospace" font-weight="600" font-size="7.5">{layer}</text>
+                    <rect x="{lx:.1}" y="{ly:.1}" width="{lw:.1}" height="20" rx="2" fill="#070312" stroke="{stroke}" stroke-width="1.5" />
+                    <text x="{cx:.1}" y="{ly_text:.1}" text-anchor="middle" fill="#F2F6FF" font-family="JetBrains Mono, monospace" font-weight="600" font-size="10">{title}</text>
+                </g>"##,
+                cx = cx,
+                cy = cy,
+                stroke = stroke_hex,
+                cy_top = cy - 2.0,
+                cy_bot = cy + 10.0,
+                heat = heat_score,
+                layer = escape_html(&layer_upper),
+                lx = lx,
+                ly = ly,
+                lw = label_w,
+                ly_text = ly + 13.5,
+                title = escape_html(&short_title)
+            ));
 
-            flow_chain_html.push_str(&format!(
-                r#"<div class="diag-node-card {layer_class}">
-                    <div class="diag-node-header">
-                        <span class="diag-layer-badge {layer_class}">{layer}</span>
-                        <span class="diag-node-title">{label}</span>
+            summary_cards_html.push_str(&format!(
+                r#"<div class="neural-node-summary-card {heat_class}">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+                        <span style="font-weight:600;color:var(--text-main);font-size:0.88rem;">{title}</span>
+                        <span class="neural-heat-pill {heat_class}">{heat}° {layer}</span>
                     </div>
-                    <p class="diag-node-desc">{desc}</p>
+                    <p style="font-size:0.78rem;color:var(--text-muted);line-height:1.45;">{desc}</p>
                     <div class="diag-files-row">{files}</div>
                 </div>"#,
-                layer_class = layer_class,
+                heat_class = heat_class,
+                title = escape_html(&node.label),
+                heat = heat_score,
                 layer = escape_html(&layer_upper),
-                label = escape_html(&node.label),
                 desc = escape_html(&node.description),
                 files = file_pills
             ));
-
-            if idx + 1 < diagram.nodes.len() || !outgoing.is_empty() {
-                if !edge_caption.is_empty() {
-                    flow_chain_html.push_str(&format!(
-                        r##"<div class="diag-arrow-connector">
-                            <div class="diag-arrow-label">{caption}</div>
-                            <svg class="diag-arrow-svg" viewBox="0 0 24 32" shape-rendering="crispEdges" aria-hidden="true">
-                                <rect x="11" y="0" width="2" height="22" fill="#48D1FF" />
-                                <rect x="7" y="18" width="10" height="2" fill="#FFE047" />
-                                <rect x="9" y="20" width="6" height="2" fill="#FFE047" />
-                                <rect x="10" y="22" width="4" height="2" fill="#FFA800" />
-                                <rect x="11" y="24" width="2" height="2" fill="#FFA800" />
-                            </svg>
-                        </div>"##,
-                        caption = escape_html(&edge_caption)
-                    ));
-                }
-            }
         }
 
         format!(
-            r#"<div class="pixel-box diagram-section-card" style="margin-bottom:20px;border-color:var(--buzz-cyan);">
-                <div class="report-Banner-top" style="margin-bottom:14px;padding-bottom:12px;">
+            r##"<div class="neural-map-card">
+                <div class="report-Banner-top" style="margin-bottom:14px;padding-bottom:12px;border-bottom-color:#3a1c5c;">
                     <div>
-                        <div class="report-repo-title" style="color:var(--buzz-cyan);">
-                            🎨 COMPONENT FLOW ARCHITECTURE // {repo}
+                        <div class="report-repo-title" style="color:#FF2E63;">
+                            🧠 HEAT-SATURATED NEURAL ARCHITECTURE MAP // {repo}
                         </div>
                         <p style="font-family:var(--font-code);font-size:0.84rem;color:var(--text-muted);margin-top:4px;">
                             {summary}
                         </p>
                     </div>
                 </div>
-                <div class="diag-flow-pipeline">
-                    {flow_chain_html}
+
+                <div class="neural-map-viewport">
+                    <svg class="neural-map-svg" viewBox="0 0 880 520" role="img" aria-label="Heat-Saturated Codebase Neural Map">
+                        <defs>
+                            <filter id="thermal-glow" x="-40%" y="-40%" width="180%" height="180%">
+                                <feGaussianBlur stdDeviation="22" result="blur" />
+                            </filter>
+                            <filter id="synapse-glow" x="-20%" y="-20%" width="140%" height="140%">
+                                <feGaussianBlur stdDeviation="4" result="blur" />
+                            </filter>
+
+                            <!-- Thermal Radial Heat Gradients (fMRI / Infrared Spectrum) -->
+                            <radialGradient id="heat-bloom-critical" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#FFF7D6" stop-opacity="0.72" />
+                                <stop offset="28%" stop-color="#FF2E63" stop-opacity="0.52" />
+                                <stop offset="65%" stop-color="#9D0208" stop-opacity="0.22" />
+                                <stop offset="100%" stop-color="#05020D" stop-opacity="0" />
+                            </radialGradient>
+                            <radialGradient id="heat-bloom-high" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#FFE047" stop-opacity="0.65" />
+                                <stop offset="35%" stop-color="#FF7B00" stop-opacity="0.44" />
+                                <stop offset="70%" stop-color="#6A040F" stop-opacity="0.18" />
+                                <stop offset="100%" stop-color="#05020D" stop-opacity="0" />
+                            </radialGradient>
+                            <radialGradient id="heat-bloom-warm" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#FFE047" stop-opacity="0.55" />
+                                <stop offset="40%" stop-color="#9D4EDD" stop-opacity="0.40" />
+                                <stop offset="75%" stop-color="#3C096C" stop-opacity="0.16" />
+                                <stop offset="100%" stop-color="#05020D" stop-opacity="0" />
+                            </radialGradient>
+                            <radialGradient id="heat-bloom-cool" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#00F5D4" stop-opacity="0.52" />
+                                <stop offset="45%" stop-color="#3A86FF" stop-opacity="0.32" />
+                                <stop offset="100%" stop-color="#05020D" stop-opacity="0" />
+                            </radialGradient>
+
+                            <linearGradient id="synapse-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stop-color="#00F5D4" />
+                                <stop offset="50%" stop-color="#FFE047" />
+                                <stop offset="100%" stop-color="#FF2E63" />
+                            </linearGradient>
+
+                            <marker id="neural-arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                <path d="M 0 1 L 10 5 L 0 9 z" fill="#FFE047" />
+                            </marker>
+                        </defs>
+
+                        <!-- Subtle Thermal Radar Grid & Concentric Field Rings -->
+                        <g stroke="#1B0E30" stroke-width="1" opacity="0.55">
+                            <line x1="0" y1="130" x2="880" y2="130" />
+                            <line x1="0" y1="260" x2="880" y2="260" />
+                            <line x1="0" y1="390" x2="880" y2="390" />
+                            <line x1="220" y1="0" x2="220" y2="520" />
+                            <line x1="440" y1="0" x2="440" y2="520" />
+                            <line x1="660" y1="0" x2="660" y2="520" />
+                            <circle cx="440" cy="260" r="110" fill="none" stroke-dasharray="4 6" />
+                            <circle cx="440" cy="260" r="220" fill="none" stroke-dasharray="4 6" />
+                            <circle cx="440" cy="260" r="330" fill="none" stroke-dasharray="4 6" />
+                        </g>
+
+                        <!-- 1. Thermal Heat Blooms -->
+                        {svg_heat_blooms}
+
+                        <!-- 2. Synaptic Axon Flow Pathways -->
+                        {svg_axons}
+
+                        <!-- 3. Satellite File Neurons & Dendrites -->
+                        {svg_dendrites}
+
+                        <!-- 4. Major Component Neural Hubs -->
+                        {svg_hubs}
+                    </svg>
                 </div>
-            </div>"#,
+
+                <!-- Thermal Saturation Scale Bar -->
+                <div class="thermal-legend-bar">
+                    <span style="color:#00F5D4;">COOL PERIPHERAL (50°)</span>
+                    <div class="thermal-gradient-strip"></div>
+                    <span style="color:#FF2E63;">INCANDESCENT CORE (99° CRITICAL HEAT)</span>
+                </div>
+
+                <!-- Neural Node Breakdown Grid -->
+                <div class="neural-nodes-legend-grid">
+                    {summary_cards_html}
+                </div>
+            </div>"##,
             repo = escape_html(repo_full_name),
             summary = escape_html(&diagram.architecture_summary),
-            flow_chain_html = flow_chain_html
+            svg_heat_blooms = svg_heat_blooms,
+            svg_axons = svg_axons,
+            svg_dendrites = svg_dendrites,
+            svg_hubs = svg_hubs,
+            summary_cards_html = summary_cards_html
         )
     }
 

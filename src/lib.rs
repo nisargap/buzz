@@ -2509,10 +2509,7 @@ pub mod templates {
                         <button
                             type="button"
                             class="pixel-btn pixel-btn-sm"
-                            hx-get="/api/scans?id={scan_id}"
-                            hx-target="#report-container"
-                            hx-swap="innerHTML"
-                            hx-on::after-request="if(event.detail.successful) window.buzzGoToStep(4);"
+                            onclick="window.buzzLoadSavedScan('{scan_id}')"
                         >
                             VIEW
                         </button>
@@ -2737,7 +2734,7 @@ pub mod templates {
                             <input type="hidden" name="line_reference" value="{line_ref}" />
                             <input type="hidden" name="remediation_patch" value="{patch}" />
                             <input type="hidden" name="patch_token" value="{patch_token}" />
-                            <button type="submit" class="pixel-btn pixel-btn-apply">
+                            <button type="button" class="pixel-btn pixel-btn-apply" onclick="return window.buzzApplyPatch(this, event);">
                                 ⚡ APPLY &amp; OPEN PR
                             </button>
                         </form>"##,

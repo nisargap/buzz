@@ -866,6 +866,10 @@ body::before {
   font-family: var(--font-display);
   font-size: 0.62rem;
   padding: 7px 12px;
+  cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
   box-shadow:
     inset -2px -2px 0 0 #159454,
     inset 2px 2px 0 0 #9effce,
@@ -877,10 +881,9 @@ body::before {
   color: #02120a;
 }
 
-.htmx-request .pixel-btn-apply,
-.pixel-btn-apply.htmx-request {
-  opacity: 0.7;
-  pointer-events: none;
+.pixel-btn-apply:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .pr-badge-row {

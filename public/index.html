@@ -1331,7 +1331,7 @@
         }
       });
 
-      // 6. Bouncing Lightning Bolt Coding on a Laptop Overlay for /api/apply_patch
+      // 6. Bouncing Lightning Bolt Coding on a Laptop Overlay & Direct Apply Patch Handler
       let codingOverlayTimer = null;
       const CODING_STEPS = [
         'Synthesizing surgical patch with Gemini 4 Argon...',
@@ -1340,15 +1340,7 @@
         'Opening GitHub Pull Request with security diff...'
       ];
 
-      document.body.addEventListener('htmx:beforeRequest', function (evt) {
-        const path = (evt.detail && evt.detail.pathInfo && evt.detail.pathInfo.requestPath) || '';
-        const elt = evt.detail && evt.detail.elt;
-        const isApplyPatch =
-          path.indexOf('/api/apply_patch') !== -1 ||
-          (elt && elt.getAttribute && elt.getAttribute('hx-post') === '/api/apply_patch');
-
-        if (!isApplyPatch) return;
-
+      function showCodingOverlay() {
         const overlay = document.getElementById('patch-coding-overlay');
         const stepText = document.getElementById('patch-coding-step-text');
         if (overlay) overlay.classList.add('active');
@@ -1362,17 +1354,9 @@
             sIdx += 1;
           }
         }, 900);
-      });
+      }
 
-      document.body.addEventListener('htmx:afterRequest', function (evt) {
-        const path = (evt.detail && evt.detail.pathInfo && evt.detail.pathInfo.requestPath) || '';
-        const elt = evt.detail && evt.detail.elt;
-        const isApplyPatch =
-          path.indexOf('/api/apply_patch') !== -1 ||
-          (elt && elt.getAttribute && elt.getAttribute('hx-post') === '/api/apply_patch');
-
-        if (!isApplyPatch) return;
-
+      function hideCodingOverlay() {
         if (codingOverlayTimer) {
           clearInterval(codingOverlayTimer);
           codingOverlayTimer = null;
@@ -1381,7 +1365,87 @@
           const overlay = document.getElementById('patch-coding-overlay');
           if (overlay) overlay.classList.remove('active');
         }, 450);
+      }
+
+      window.buzzApplyPatch = async function (btnEl, evt) {
+        if (evt && evt.preventDefault) evt.preventDefault();
+        if (evt && evt.stopPropagation) evt.stopPropagation();
+
+        const form = btnEl ? btnEl.closest('form') : null;
+        if (!form) return false;
+
+        const targetSlot =
+          btnEl.closest('[id^="patch-action-slot-"]') || form.parentElement;
+
+        btnEl.disabled = true;
+        showCodingOverlay();
+
+        try {
+          const formData = new FormData(form);
+          const params = new URLSearchParams();
+          formData.forEach(function (val, key) {
+            params.append(key, String(val));
+          });
+
+          const headers = {
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+          };
+          if (githubProviderToken) headers['X-GitHub-Token'] = githubProviderToken;
+          if (githubUserHandle) headers['X-GitHub-User'] = githubUserHandle;
+          if (supabaseUserId) headers['X-Supabase-User-Id'] = supabaseUserId;
+
+          const res = await fetch('/api/apply_patch', {
+            method: 'POST',
+            headers: headers,
+            body: params.toString()
+          });
+
+          const html = await res.text();
+          if (targetSlot && html) {
+            targetSlot.innerHTML = html;
+            persistActiveReportState();
+          }
+        } catch (err) {
+          if (targetSlot) {
+            targetSlot.innerHTML =
+              '<div class="pr-badge-row"><span class="pr-status-tag error">✗ Network error while applying patch</span></div>';
+          }
+        } finally {
+          hideCodingOverlay();
+        }
+        return false;
+      };
+
+      // Global delegated listener so even cached/restored .pixel-btn-apply buttons always trigger buzzApplyPatch
+      document.addEventListener('click', function (evt) {
+        const applyBtn = evt.target && evt.target.closest ? evt.target.closest('.pixel-btn-apply') : null;
+        if (applyBtn && !applyBtn.getAttribute('onclick')) {
+          window.buzzApplyPatch(applyBtn, evt);
+        }
       });
+
+      window.buzzLoadSavedScan = async function (scanId) {
+        if (!scanId) return;
+        const headers = {};
+        if (githubProviderToken) headers['X-GitHub-Token'] = githubProviderToken;
+        if (githubUserHandle) headers['X-GitHub-User'] = githubUserHandle;
+        if (supabaseUserId) headers['X-Supabase-User-Id'] = supabaseUserId;
+
+        try {
+          const res = await fetch('/api/scans?id=' + encodeURIComponent(scanId), {
+            headers: headers
+          });
+          if (res.ok) {
+            const html = await res.text();
+            const reportContainer = document.getElementById('report-container');
+            if (reportContainer) {
+              reportContainer.innerHTML = html;
+              persistActiveReportState();
+              window.buzzGoToStep(4);
+            }
+          }
+        } catch (_) {}
+      };
 
       document.body.addEventListener('htmx:afterSettle', function (evt) {
         const target = evt.detail && evt.detail.target;

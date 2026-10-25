@@ -1597,6 +1597,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn new_publication_stops_before_creating_branch_when_base_is_stale() {
+        let api = FakeGitHub::new(vec![
+            (
+                "GET",
+                "git/ref/heads/buzz/refactor-reviewed",
+                Err(error(404, "missing")),
+            ),
+            (
+                "GET",
+                "git/ref/heads/main",
+                Ok(json!({"object": {"sha": "moved"}})),
+            ),
+        ]);
+        assert_eq!(
+            publish_draft(&api, &target(), "body")
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        api.complete();
+        assert!(api.writes.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ref_creation_conflict_never_adopts_an_unrelated_commit() {
+        let api = FakeGitHub::new(vec![
+            (
+                "GET",
+                "git/ref/heads/buzz/refactor-reviewed",
+                Err(error(404, "missing")),
+            ),
+            base_head(),
+            ("POST", "git/commits", Ok(json!({"sha": "patch"}))),
+            base_head(),
+            ("POST", "git/refs", Err(error(409, "already exists"))),
+            patch_head(),
+            (
+                "GET",
+                "git/commits/patch",
+                Ok(
+                    json!({"sha": "patch", "tree": {"sha": "unrelated"}, "parents": [{"sha": "base"}]}),
+                ),
+            ),
+        ]);
+        assert_eq!(
+            publish_draft(&api, &target(), "body")
+                .await
+                .unwrap_err()
+                .status,
+            409
+        );
+        api.complete();
+        assert!(api.writes.borrow().iter().all(|(path, _)| path != "pulls"));
+    }
+
+    #[tokio::test]
     async fn failed_pr_creation_leaves_matching_branch_available_for_retry() {
         let api = FakeGitHub::new(vec![
             patch_head(),

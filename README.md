@@ -123,6 +123,10 @@ For an existing agent or deterministic evaluation, pass `--proposal /path/to/pro
 
 ```bash
 python3 -m unittest discover -s tests -v
+node --test tests/test_refactor_web.js
+cargo test --locked -- --skip test_live_full_repo_tree_loader_on_nisargap_buzz
 ```
+
+The web suite uses offline API/DOM fixtures for authentication reuse, review invalidation, scope enforcement, and draft PR request payloads. Rust tests cover policy checks and signed review scopes. The live CVE audit test is excluded above because it requires external services. A live refactor generation/publication smoke test still requires configured credentials and an explicitly selected test repository.
 
 The suite exercises the same runner against disposable Python and JavaScript Git fixtures (the JavaScript fixture requires Node), including failed checks, protected paths, patch limits, feedback, policy changes, and manual-edit rechecks. Provider calls are mocked; tests do not upload repository code. Exit codes: `0` for successful commands/review-ready or no-change runs, `1` for input/setup errors, and `2` for blocked, failing, or unverified runs.

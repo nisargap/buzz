@@ -923,6 +923,29 @@
         }
       };
 
+      window.buzzConnectGitHubForPR = async function () {
+        if (supabaseClient) {
+          const { error } = await supabaseClient.auth.signInWithOAuth({
+            provider: 'github',
+            options: {
+              scopes: 'read:user repo',
+              redirectTo: window.location.origin
+            }
+          });
+          if (!error) return;
+        }
+        const tok = window.prompt(
+          'Enter a GitHub Personal Access Token (ghp_... or github_pat_...) with `repo` permission to create remediation branches & Pull Requests:',
+          githubProviderToken || ''
+        );
+        if (tok && tok.trim()) {
+          githubProviderToken = tok.trim();
+          localStorage.setItem('buzz_gh_token', githubProviderToken);
+          updateAuthBadge();
+          window.alert('GitHub token saved! Click "⚡ APPLY & OPEN PR" on any patch to open the Pull Request.');
+        }
+      };
+
       initSupabaseAuth();
     })();
   </script>

@@ -428,22 +428,25 @@ body::before {
 }
 
 /* ==========================================================================
-   EMPTY LIGHTNING BOLT 1M CONTEXT LOADER & AUTO-COMPACT STAGE
+   DEDICATED STEP 3: LIVE 1M CONTEXT LIGHTNING BOLT ANALYSIS PAGE
    ========================================================================== */
 
-.bolt-loader-stage {
-  margin-top: 22px;
-  padding: 24px 20px;
-  background: var(--terminal-bg);
-  border: 3px solid var(--buzz-yellow);
-  box-shadow: inset 0 0 24px rgba(255, 224, 71, 0.08);
+.bolt-loader-page-card {
+  width: 100%;
+  padding: 32px 28px;
+  background: var(--panel-bg);
+  border: 4px solid var(--buzz-yellow);
+  box-shadow:
+    0 0 0 4px var(--border-dark),
+    8px 8px 0 0 var(--border-dark);
+  display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 16px;
+  gap: 18px;
 }
 
-.bolt-loader-stage.compacting {
+.bolt-loader-page-card.compacting {
   border-color: var(--buzz-cyan);
   box-shadow:
     0 0 24px rgba(72, 209, 255, 0.45),
@@ -461,26 +464,27 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 18px;
+  gap: 24px;
+  margin: 8px 0;
 }
 
 .bolt-gauge-svg {
-  width: 156px;
-  height: 156px;
+  width: 184px;
+  height: 184px;
   image-rendering: pixelated;
-  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.7));
+  filter: drop-shadow(0 8px 0 rgba(0, 0, 0, 0.75));
 }
 
 .bolt-scale-ticks {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  height: 112px;
+  height: 126px;
   font-family: var(--font-code);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-dim);
   text-align: left;
-  padding-bottom: 18px;
+  padding-bottom: 20px;
 }
 
 .bolt-scale-ticks span.active-tick {
@@ -490,23 +494,50 @@ body::before {
 
 .context-counter-readout {
   font-family: var(--font-display);
-  font-size: 0.92rem;
+  font-size: 1rem;
   color: var(--buzz-yellow);
   letter-spacing: 1px;
 }
 
 .context-sub-readout {
   font-family: var(--font-code);
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   color: var(--buzz-cyan);
-  min-height: 1.3em;
+  min-height: 1.4em;
+}
+
+.file-ingestion-log {
+  width: 100%;
+  background: var(--terminal-bg);
+  border: 2px solid var(--border-blue);
+  padding: 10px 14px;
+  font-family: var(--font-code);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  text-align: left;
+  max-height: 110px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.file-ingestion-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.file-ingestion-row .tok-count {
+  color: var(--buzz-yellow);
+  flex-shrink: 0;
 }
 
 .compact-status-pill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px;
+  padding: 6px 14px;
   font-family: var(--font-display);
   font-size: 0.62rem;
   background: #0b1630;

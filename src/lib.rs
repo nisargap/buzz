@@ -1439,18 +1439,32 @@ pub async fn create_remediation_pull_request(
     }
     let repo_name_only = clean_repo.split('/').nth(1).unwrap_or("repo");
 
-    let base_branch = if req.branch.trim().is_empty() || req.branch == "HEAD" {
-        "main"
+    // 0. Verify that the target repository is an open-source (public) repository and get its true default_branch
+    let repo_meta_url = format!("https://api.github.com/repos/{}", clean_repo);
+    let mut base_branch = if req.branch.trim().is_empty() || req.branch == "HEAD" {
+        "main".to_string()
     } else {
-        req.branch.trim()
+        req.branch.trim().to_string()
     };
 
-    let clean_file_path = sanitize_repo_file_path(&req.file_path);
-    if clean_file_path.is_empty() || clean_file_path.contains("..") {
-        return PullRequestOutcome::Error("Invalid target file path.".to_string());
+    if let Ok(meta_json) = fetch_github_json_with_fallback(client, &repo_meta_url, Some(token)).await
+    {
+        if meta_json.get("private").and_then(|v| v.as_bool()) == Some(true) {
+            return PullRequestOutcome::Error(format!(
+                "Repository `{}` is private. Automated fork & PR remediation requires an open-source (public) repository.",
+                clean_repo
+            ));
+        }
+        if let Some(db) = meta_json
+            .get("default_branch")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            base_branch = db.to_string();
+        }
     }
 
-    // 0. Auto-accept any pending repository collaborator invitations for this token
+    // Auto-accept any pending repository collaborator invitations for this token
     accept_pending_repo_invitations(client, token).await;
     let pat_user = fetch_authenticated_github_login(client, token).await;
 
@@ -1475,11 +1489,45 @@ pub async fn create_remediation_pull_request(
         return PullRequestOutcome::Error("Missing commit SHA on base branch.".to_string());
     };
 
-    // 2. Fetch existing file content & blob SHA from original repo (with raw.githubusercontent.com fallback)
-    let contents_url = format!(
+    // 2. Resolve and fetch existing file content & blob SHA from original repo
+    let mut clean_file_path = sanitize_repo_file_path(&req.file_path);
+    if clean_file_path.is_empty() || clean_file_path.contains("..") {
+        clean_file_path = "README.md".to_string();
+    }
+
+    let mut contents_url = format!(
         "https://api.github.com/repos/{}/contents/{}?ref={}",
         clean_repo, clean_file_path, base_branch
     );
+
+    // If the finding referenced a non-existent path (e.g. a package name), fall back to an existing manifest in the repo
+    if fetch_github_json_with_fallback(client, &contents_url, Some(token))
+        .await
+        .is_err()
+    {
+        for fallback_candidate in [
+            "Cargo.toml",
+            "package.json",
+            "requirements.txt",
+            "pyproject.toml",
+            "go.mod",
+            "README.md",
+        ] {
+            let test_url = format!(
+                "https://api.github.com/repos/{}/contents/{}?ref={}",
+                clean_repo, fallback_candidate, base_branch
+            );
+            if fetch_github_json_with_fallback(client, &test_url, Some(token))
+                .await
+                .is_ok()
+            {
+                clean_file_path = fallback_candidate.to_string();
+                contents_url = test_url;
+                break;
+            }
+        }
+    }
+
     let (file_sha, original_content) =
         match fetch_github_json_with_fallback(client, &contents_url, Some(token)).await {
             Ok(file_json) => {
@@ -1499,7 +1547,6 @@ pub async fn create_remediation_pull_request(
                 (sha, text)
             }
             Err(_) => {
-                // Fallback to raw.githubusercontent.com if REST API rate-limited
                 let raw_url = format!(
                     "https://raw.githubusercontent.com/{}/{}/{}",
                     clean_repo, base_branch, clean_file_path
@@ -1549,7 +1596,8 @@ pub async fn create_remediation_pull_request(
         .collect();
     let new_branch = format!("buzz/fix-{}-{}", safe_cve.trim_matches('-'), unix_ts);
 
-    // 5. Try creating the branch directly on upstream; if forbidden/not-owner, use the fork!
+    // 5. Try creating the branch directly on upstream; if PAT doesn't have direct push access,
+    //    fork the open-source repository into the PAT account and wait until the fork is ready!
     let mut working_repo = clean_repo.to_string();
     let mut is_fork_workflow = false;
     let mut commit_branch = new_branch.clone();
@@ -1574,23 +1622,89 @@ pub async fn create_remediation_pull_request(
     };
 
     if !direct_branch_ok {
-        let fork_owner = pat_user
+        let mut fork_owner = pat_user
             .clone()
             .unwrap_or_else(|| "leo-gold-fast".to_string());
 
         working_repo = format!("{}/{}", fork_owner, repo_name_only);
         is_fork_workflow = true;
 
-        // Trigger fork creation in case it doesn't exist yet (no-op if already forked)
+        // Trigger fork creation on GitHub (returns 202 Accepted or 200 OK if already forked)
         let fork_url = format!("https://api.github.com/repos/{}/forks", clean_repo);
-        let _ = client
+        if let Ok(fork_resp) = client
             .post(&fork_url)
             .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
             .header("Accept", "application/vnd.github+json")
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({ "default_branch_only": true }))
             .send()
-            .await;
+            .await
+        {
+            if let Ok(fork_json) = fork_resp.json::<serde_json::Value>().await {
+                if let Some(full) = fork_json.get("full_name").and_then(|v| v.as_str()) {
+                    if !full.is_empty() {
+                        working_repo = full.to_string();
+                        if let Some(owner_part) = full.split('/').next() {
+                            fork_owner = owner_part.to_string();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Poll patiently (up to ~16 seconds) until GitHub finishes creating/populating the fork
+        let mut fork_sha = base_sha.clone();
+        let mut fork_ready = false;
+        let branch_info_url = format!(
+            "https://api.github.com/repos/{}/branches/{}",
+            working_repo, base_branch
+        );
+        let fork_file_check_url = format!(
+            "https://api.github.com/repos/{}/contents/{}?ref={}",
+            working_repo, clean_file_path, base_branch
+        );
+
+        for _ in 0..18 {
+            if let Ok(br_resp) = client
+                .get(&branch_info_url)
+                .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+                .header("Accept", "application/vnd.github+json")
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await
+            {
+                if br_resp.status().is_success() {
+                    if let Ok(bj) = br_resp.json::<serde_json::Value>().await {
+                        if let Some(s) = bj.pointer("/commit/sha").and_then(|v| v.as_str()) {
+                            fork_sha = s.to_string();
+                            fork_ready = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Ok(fc_resp) = client
+                .get(&fork_file_check_url)
+                .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+                .header("Accept", "application/vnd.github+json")
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await
+            {
+                if fc_resp.status().is_success() {
+                    fork_ready = true;
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+        }
+
+        if !fork_ready {
+            return PullRequestOutcome::Error(format!(
+                "Fork `{}` of `{}` was not created by GitHub. Ensure `GITHUB_PAT` is a Classic PAT (`ghp_...` with `public_repo` / `repo` scope) so it can fork `{}`.",
+                working_repo, clean_repo, clean_repo
+            ));
+        }
 
         // Sync existing fork with upstream
         let sync_url = format!(
@@ -1606,30 +1720,7 @@ pub async fn create_remediation_pull_request(
             .send()
             .await;
 
-        // Read the fork's head SHA from /branches/{base_branch} or /git/ref/heads/{base_branch}
-        let mut fork_sha = base_sha.clone();
-        let branch_info_url = format!(
-            "https://api.github.com/repos/{}/branches/{}",
-            working_repo, base_branch
-        );
-        if let Ok(br_resp) = client
-            .get(&branch_info_url)
-            .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
-            .header("Accept", "application/vnd.github+json")
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
-            .await
-        {
-            if br_resp.status().is_success() {
-                if let Ok(bj) = br_resp.json::<serde_json::Value>().await {
-                    if let Some(s) = bj.pointer("/commit/sha").and_then(|v| v.as_str()) {
-                        fork_sha = s.to_string();
-                    }
-                }
-            }
-        }
-
-        // Try creating `new_branch` on the fork; if that fails, commit directly to `base_branch` on the fork!
+        // Create `new_branch` on the fork; if that fails, commit directly to `base_branch` on the fork
         let fork_ref_url = format!("https://api.github.com/repos/{}/git/refs", working_repo);
         let fork_ref_body = serde_json::json!({
             "ref": format!("refs/heads/{}", new_branch),
@@ -1649,7 +1740,7 @@ pub async fn create_remediation_pull_request(
         };
 
         if !branch_created_on_fork {
-            commit_branch = base_branch.to_string();
+            commit_branch = base_branch.clone();
         }
     }
 

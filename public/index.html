@@ -741,8 +741,8 @@
       window.addEventListener('resize', resizeRain);
       setInterval(stepRain, 55);
 
-      // 2. 4-Step Wizard Navigation Controller
-      window.buzzGoToStep = function (stepNumber) {
+      // 2. 4-Step Wizard Navigation & Persistent Browser State Controller
+      window.buzzGoToStep = function (stepNumber, skipPersist) {
         [1, 2, 3, 4].forEach(function (n) {
           const el = document.getElementById('wizard-step-' + n);
           if (el) {
@@ -753,8 +753,29 @@
             }
           }
         });
+        if (!skipPersist) {
+          // Persist step (if refreshing during transient Step 3 loader, return to Step 2)
+          const stepToSave = stepNumber === 3 ? 2 : stepNumber;
+          localStorage.setItem('buzz_wizard_step', String(stepToSave));
+        }
         window.scrollTo({ top: 0, behavior: 'instant' });
       };
+
+      function persistActiveReportState() {
+        const reportContainer = document.getElementById('report-container');
+        if (!reportContainer) return;
+        const html = reportContainer.innerHTML || '';
+        if (html.trim()) {
+          localStorage.setItem('buzz_active_report_html', html);
+          const headerCard = reportContainer.querySelector('[data-scan-id]');
+          if (headerCard) {
+            const scanId = headerCard.getAttribute('data-scan-id') || '';
+            const repoName = headerCard.getAttribute('data-repo') || '';
+            if (scanId) localStorage.setItem('buzz_active_scan_id', scanId);
+            if (repoName) localStorage.setItem('buzz_selected_repo', repoName);
+          }
+        }
+      }
 
       // 3. Exact Repository File Filter (matches src/lib.rs is_auditable_source_path)
       function isAuditableSourcePath(path) {
@@ -1067,6 +1088,7 @@
       window.buzzFinishAnalysisPage = function (event) {
         stopAllAnalysisTimers();
         if (event && event.detail && event.detail.successful) {
+          persistActiveReportState();
           window.buzzGoToStep(4);
           if (window.htmx && (githubUserHandle || githubProviderToken || supabaseUserId)) {
             htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
@@ -1084,6 +1106,7 @@
         const form = document.getElementById('analyze-form');
         if (input && repoFullName) {
           input.value = repoFullName;
+          localStorage.setItem('buzz_selected_repo', repoFullName);
         }
         if (form && window.htmx) {
           htmx.trigger(form, 'submit');
@@ -1226,7 +1249,14 @@
         localStorage.removeItem('buzz_gh_token');
         localStorage.removeItem('buzz_gh_user');
         localStorage.removeItem('buzz_gh_avatar');
+        localStorage.removeItem('buzz_wizard_step');
+        localStorage.removeItem('buzz_active_report_html');
+        localStorage.removeItem('buzz_active_scan_id');
+        localStorage.removeItem('buzz_selected_repo');
         sessionStorage.removeItem('buzz_oauth_pending');
+        const reportContainer = document.getElementById('report-container');
+        if (reportContainer) reportContainer.innerHTML = '';
+        window.buzzGoToStep(1, true);
       }
 
       function applySupabaseSession(session) {
@@ -1353,8 +1383,62 @@
         }, 450);
       });
 
+      document.body.addEventListener('htmx:afterSettle', function (evt) {
+        const target = evt.detail && evt.detail.target;
+        if (!target) return;
+        const reportContainer = document.getElementById('report-container');
+        if (
+          target.id === 'report-container' ||
+          (reportContainer && reportContainer.contains(target))
+        ) {
+          persistActiveReportState();
+        }
+      });
+
+      function restoreBrowserState() {
+        const savedRepo = localStorage.getItem('buzz_selected_repo');
+        const repoInput = document.getElementById('repo-input');
+        if (repoInput) {
+          if (savedRepo) repoInput.value = savedRepo;
+          repoInput.addEventListener('input', function () {
+            localStorage.setItem('buzz_selected_repo', repoInput.value);
+          });
+        }
+
+        const isSignedIn = Boolean(githubUserHandle || githubProviderToken || supabaseUserId);
+        if (!isSignedIn) return;
+
+        const savedReportHtml = localStorage.getItem('buzz_active_report_html') || '';
+        const savedScanId = localStorage.getItem('buzz_active_scan_id') || '';
+        const savedStep = parseInt(localStorage.getItem('buzz_wizard_step') || '1', 10);
+
+        const reportContainer = document.getElementById('report-container');
+        if (reportContainer && savedReportHtml.trim()) {
+          reportContainer.innerHTML = savedReportHtml;
+          if (window.htmx) {
+            window.htmx.process(reportContainer);
+          }
+        }
+
+        if (!hadOAuthCallbackOnBoot) {
+          if (savedStep === 4 && savedReportHtml.trim()) {
+            window.buzzGoToStep(4, true);
+            // Also refresh the saved scan from Supabase so any patch PR states are up to date
+            if (savedScanId && window.htmx) {
+              htmx.ajax('GET', '/api/scans?id=' + encodeURIComponent(savedScanId), {
+                target: '#report-container',
+                swap: 'innerHTML'
+              });
+            }
+          } else if (savedStep === 2 || savedStep === 3) {
+            window.buzzGoToStep(2, true);
+          }
+        }
+      }
+
       async function initSupabaseAuth() {
         updateAuthBadge();
+        restoreBrowserState();
         if (hadOAuthCallbackOnBoot) {
           sessionStorage.removeItem('buzz_oauth_pending');
           window.buzzGoToStep(2);
@@ -1444,6 +1528,7 @@
         const input = document.getElementById('repo-input');
         if (input) {
           input.value = repoFullName;
+          localStorage.setItem('buzz_selected_repo', repoFullName);
           input.focus();
         }
       };

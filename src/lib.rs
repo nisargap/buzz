@@ -2824,8 +2824,10 @@ pub mod templates {
             r#"<span class="meta-tag">AUTO-COMPACT: STANDBY (&lt;1M)</span>"#.to_string()
         };
 
+        let scan_id_attr = escape_html(report.scan_id.as_deref().unwrap_or(""));
+
         format!(
-            r#"<div class="pixel-box-gold report-header-card">
+            r#"<div class="pixel-box-gold report-header-card" data-scan-id="{scan_id}" data-repo="{repo}">
                 <div class="report-Banner-top">
                     <div>
                         <div class="report-repo-title">⚡ LIVE REPO AUDIT // {repo}</div>
@@ -2897,6 +2899,7 @@ pub mod templates {
             <div class="findings-grid">
                 {findings_html}
             </div>"#,
+            scan_id = scan_id_attr,
             repo = escape_html(&report.repo_full_name),
             branch = escape_html(&report.default_branch),
             sha = escape_html(&report.commit_sha),

@@ -3259,7 +3259,9 @@ pub mod templates {
     }
 
     pub fn render_repo_selector(repos: &[GitHubRepoItem]) -> String {
-        let mut options = String::new();
+        let mut options = String::from(
+            r#"<option value="" selected disabled>Choose a repository...</option>"#,
+        );
         for repo in repos {
             let lang = repo.language.as_deref().unwrap_or("Code");
             let vis = if repo.private { "PRIVATE" } else { "PUBLIC" };
@@ -3271,11 +3273,16 @@ pub mod templates {
                 vis = vis
             ));
         }
+        options.push_str(
+            r#"<option value="__custom__">✎ Enter a custom repository (owner/repo)...</option>"#,
+        );
 
         format!(
-            r#"<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <label for="gh-repo-picker" style="font-size:0.72rem;color:var(--buzz-cyan);">YOUR GITHUB REPOS:</label>
-                <select id="gh-repo-picker" class="pixel-select" style="flex:1;" onchange="window.buzzSelectRepo(this.value)">
+            r#"<div style="display:flex;flex-direction:column;gap:8px;">
+                <label for="gh-repo-picker" style="font-size:0.72rem;color:var(--buzz-cyan);font-family:var(--font-display);">
+                    1. SELECT YOUR GITHUB REPOSITORY
+                </label>
+                <select id="gh-repo-picker" class="pixel-select" onchange="window.buzzOnRepoDropdownChange(this.value)">
                     {options}
                 </select>
             </div>"#,

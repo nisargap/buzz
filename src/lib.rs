@@ -19,17 +19,23 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Self {
+        load_dotenv_files();
+
         let non_empty = |key: &str| -> Option<String> {
             env::var(key)
                 .ok()
-                .map(|v| v.trim().to_string())
+                .map(|v| v.trim().trim_matches('"').to_string())
                 .filter(|v| !v.is_empty())
         };
 
         Self {
-            supabase_url: non_empty("SUPABASE_URL"),
-            supabase_anon_key: non_empty("SUPABASE_ANON_KEY"),
-            supabase_service_key: non_empty("SUPABASE_SERVICE_ROLE_KEY"),
+            supabase_url: non_empty("SUPABASE_URL")
+                .or_else(|| non_empty("NEXT_PUBLIC_SUPABASE_URL")),
+            supabase_anon_key: non_empty("SUPABASE_ANON_KEY")
+                .or_else(|| non_empty("NEXT_PUBLIC_SUPABASE_ANON_KEY"))
+                .or_else(|| non_empty("SUPABASE_PUBLISHABLE_KEY")),
+            supabase_service_key: non_empty("SUPABASE_SERVICE_ROLE_KEY")
+                .or_else(|| non_empty("SUPABASE_SECRET_KEY")),
             gemini_api_key: non_empty("GEMINI_API_KEY"),
             gemini_model: non_empty("GEMINI_MODEL")
                 .unwrap_or_else(|| "gemini-4-argon".to_string()),
@@ -44,6 +50,26 @@ impl AppConfig {
         self.supabase_service_key
             .as_deref()
             .or(self.supabase_anon_key.as_deref())
+    }
+}
+
+fn load_dotenv_files() {
+    for path in [".env.local", ".env"] {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((k, v)) = trimmed.split_once('=') {
+                    let key = k.trim();
+                    let val = v.trim().trim_matches('"').trim_matches('\'');
+                    if env::var_os(key).is_none() {
+                        env::set_var(key, val);
+                    }
+                }
+            }
+        }
     }
 }
 

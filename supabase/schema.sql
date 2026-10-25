@@ -66,23 +66,28 @@ ALTER TABLE public.scans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.scan_findings ENABLE ROW LEVEL SECURITY;
 
 -- Anyone can read the CVE datasource
+DROP POLICY IF EXISTS "Public read access to CVEs" ON public.cves;
 CREATE POLICY "Public read access to CVEs"
     ON public.cves FOR SELECT
     USING (true);
 
 -- Anyone can view & insert scan reports (or scope to auth.uid() in strict mode)
+DROP POLICY IF EXISTS "Read access to scans" ON public.scans;
 CREATE POLICY "Read access to scans"
     ON public.scans FOR SELECT
     USING (true);
 
+DROP POLICY IF EXISTS "Insert access to scans" ON public.scans;
 CREATE POLICY "Insert access to scans"
     ON public.scans FOR INSERT
     WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Read access to scan findings" ON public.scan_findings;
 CREATE POLICY "Read access to scan findings"
     ON public.scan_findings FOR SELECT
     USING (true);
 
+DROP POLICY IF EXISTS "Insert access to scan findings" ON public.scan_findings;
 CREATE POLICY "Insert access to scan findings"
     ON public.scan_findings FOR INSERT
     WITH CHECK (true);

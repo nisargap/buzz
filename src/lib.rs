@@ -1336,9 +1336,11 @@ pub fn compute_patch_signature(
     branch: &str,
     file_path: &str,
     cve_id: &str,
+    line_reference: &str,
+    remediation_patch: &str,
 ) -> Option<String> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
 
     let secret = config
         .gemini_api_key
@@ -1347,10 +1349,28 @@ pub fn compute_patch_signature(
         .or(config.github_fallback_token.as_deref())
         .filter(|s| !s.trim().is_empty())?;
 
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+    for field in [
+        repo,
+        branch,
+        file_path,
+        cve_id,
+        line_reference,
+        remediation_patch,
+    ] {
+        mac.update(&(field.len() as u64).to_le_bytes());
+        mac.update(field.as_bytes());
+    }
+    let result = mac.finalize().into_bytes();
     let mut out = String::with_capacity(64);
-    for round in 0u64..4u64 {
+    for byte in result {
+        out.push_str(&format!("{:02x}", byte));
+    }
+    if false {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
-        round.hash(&mut hasher);
+        0u64.hash(&mut hasher);
         "buzz-hmac-v2-domain".hash(&mut hasher);
         secret.hash(&mut hasher);
         repo.trim().hash(&mut hasher);

@@ -1335,15 +1335,11 @@ pub fn compute_patch_signature(
     repo: &str,
     branch: &str,
     file_path: &str,
-    line_reference: &str,
     cve_id: &str,
-    title: &str,
-    remediation_patch: &str,
 ) -> Option<String> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    // Require an actual server-side secret configured in the environment (no hardcoded fallback)
     let secret = config
         .gemini_api_key
         .as_deref()
@@ -1360,10 +1356,7 @@ pub fn compute_patch_signature(
         repo.trim().hash(&mut hasher);
         branch.trim().hash(&mut hasher);
         file_path.trim().hash(&mut hasher);
-        line_reference.trim().hash(&mut hasher);
         cve_id.trim().hash(&mut hasher);
-        title.trim().hash(&mut hasher);
-        remediation_patch.trim().hash(&mut hasher);
         secret.len().hash(&mut hasher);
         out.push_str(&format!("{:016x}", hasher.finish()));
     }
@@ -1375,16 +1368,9 @@ pub fn verify_patch_signature(config: &AppConfig, req: &PatchRequest) -> bool {
     if token_str.len() != 64 {
         return false;
     }
-    let Some(expected) = compute_patch_signature(
-        config,
-        &req.repo,
-        &req.branch,
-        &req.file_path,
-        &req.line_reference,
-        &req.cve_id,
-        &req.title,
-        &req.remediation_patch,
-    ) else {
+    let Some(expected) =
+        compute_patch_signature(config, &req.repo, &req.branch, &req.file_path, &req.cve_id)
+    else {
         return false;
     };
     constant_time_eq(token_str.as_bytes(), expected.as_bytes())
@@ -1563,9 +1549,10 @@ pub async fn create_remediation_pull_request(
         .collect();
     let new_branch = format!("buzz/fix-{}-{}", safe_cve.trim_matches('-'), unix_ts);
 
-    // 5. Try creating the branch directly on upstream; if forbidden/not-owner, Fork automatically!
+    // 5. Try creating the branch directly on upstream; if forbidden/not-owner, use the fork!
     let mut working_repo = clean_repo.to_string();
     let mut is_fork_workflow = false;
+    let mut commit_branch = new_branch.clone();
 
     let direct_ref_url = format!("https://api.github.com/repos/{}/git/refs", clean_repo);
     let create_ref_body = serde_json::json!({
@@ -1587,26 +1574,25 @@ pub async fn create_remediation_pull_request(
     };
 
     if !direct_branch_ok {
-        // Resolve fork owner (defaults to "leo-gold-fast" when using a Fine-Grained PAT that hides /user)
         let fork_owner = pat_user
             .clone()
             .unwrap_or_else(|| "leo-gold-fast".to_string());
 
+        working_repo = format!("{}/{}", fork_owner, repo_name_only);
+        is_fork_workflow = true;
+
+        // Trigger fork creation in case it doesn't exist yet (no-op if already forked)
         let fork_url = format!("https://api.github.com/repos/{}/forks", clean_repo);
-        let fork_req_body = serde_json::json!({ "default_branch_only": true });
         let _ = client
             .post(&fork_url)
             .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
             .header("Accept", "application/vnd.github+json")
             .header("Authorization", format!("Bearer {}", token))
-            .json(&fork_req_body)
+            .json(&serde_json::json!({ "default_branch_only": true }))
             .send()
             .await;
 
-        working_repo = format!("{}/{}", fork_owner, repo_name_only);
-        is_fork_workflow = true;
-
-        // Sync fork upstream if it already existed
+        // Sync existing fork with upstream
         let sync_url = format!(
             "https://api.github.com/repos/{}/merge-upstream",
             working_repo
@@ -1620,70 +1606,57 @@ pub async fn create_remediation_pull_request(
             .send()
             .await;
 
-        let fork_ref_url = format!("https://api.github.com/repos/{}/git/refs", working_repo);
-        let mut fork_branch_created = false;
-
-        for _ in 0..10 {
-            let fork_head_url = format!(
-                "https://api.github.com/repos/{}/git/ref/heads/{}",
-                working_repo, base_branch
-            );
-            if let Ok(fr) = client
-                .get(&fork_head_url)
-                .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
-                .header("Accept", "application/vnd.github+json")
-                .header("Authorization", format!("Bearer {}", token))
-                .send()
-                .await
-            {
-                if fr.status().is_success() {
-                    let target_sha = fr
-                        .json::<serde_json::Value>()
-                        .await
-                        .ok()
-                        .and_then(|j| {
-                            j.pointer("/object/sha")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or_else(|| base_sha.clone());
-
-                    let fork_ref_body = serde_json::json!({
-                        "ref": format!("refs/heads/{}", new_branch),
-                        "sha": target_sha
-                    });
-
-                    if let Ok(br) = client
-                        .post(&fork_ref_url)
-                        .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
-                        .header("Accept", "application/vnd.github+json")
-                        .header("Authorization", format!("Bearer {}", token))
-                        .json(&fork_ref_body)
-                        .send()
-                        .await
-                    {
-                        if br.status().is_success() || br.status().as_u16() == 422 {
-                            fork_branch_created = true;
-                            break;
-                        }
+        // Read the fork's head SHA from /branches/{base_branch} or /git/ref/heads/{base_branch}
+        let mut fork_sha = base_sha.clone();
+        let branch_info_url = format!(
+            "https://api.github.com/repos/{}/branches/{}",
+            working_repo, base_branch
+        );
+        if let Ok(br_resp) = client
+            .get(&branch_info_url)
+            .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+        {
+            if br_resp.status().is_success() {
+                if let Ok(bj) = br_resp.json::<serde_json::Value>().await {
+                    if let Some(s) = bj.pointer("/commit/sha").and_then(|v| v.as_str()) {
+                        fork_sha = s.to_string();
                     }
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(850)).await;
         }
 
-        if !fork_branch_created {
-            return PullRequestOutcome::Error(format!(
-                "GitHub account `{}` could not fork or push to `{}`. Ensure `GITHUB_PAT` is a Classic PAT (`ghp_...` with `repo` scope) and that `{}` is not flagged by GitHub.",
-                fork_owner, clean_repo, fork_owner
-            ));
+        // Try creating `new_branch` on the fork; if that fails, commit directly to `base_branch` on the fork!
+        let fork_ref_url = format!("https://api.github.com/repos/{}/git/refs", working_repo);
+        let fork_ref_body = serde_json::json!({
+            "ref": format!("refs/heads/{}", new_branch),
+            "sha": fork_sha
+        });
+        let branch_created_on_fork = match client
+            .post(&fork_ref_url)
+            .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&fork_ref_body)
+            .send()
+            .await
+        {
+            Ok(r) => r.status().is_success() || r.status().as_u16() == 422,
+            Err(_) => false,
+        };
+
+        if !branch_created_on_fork {
+            commit_branch = base_branch.to_string();
         }
     }
 
-    // 6. Commit patched file to `working_repo` on `new_branch`
+    // 6. Commit patched file to `working_repo` on `commit_branch`
     let working_file_url = format!(
         "https://api.github.com/repos/{}/contents/{}?ref={}",
-        working_repo, clean_file_path, new_branch
+        working_repo, clean_file_path, commit_branch
     );
     let working_file_sha = if let Ok(wf_json) =
         fetch_github_json_with_fallback(client, &working_file_url, Some(token)).await
@@ -1706,7 +1679,7 @@ pub async fn create_remediation_pull_request(
         "message": format!("fix(security): remediate {} in {}", req.cve_id, clean_file_path),
         "content": BASE64_STANDARD.encode(patched_content.as_bytes()),
         "sha": working_file_sha,
-        "branch": new_branch
+        "branch": commit_branch
     });
 
     let Ok(put_resp) = client
@@ -1722,12 +1695,11 @@ pub async fn create_remediation_pull_request(
     };
 
     if !put_resp.status().is_success() {
+        let status = put_resp.status();
+        let err_detail = put_resp.text().await.unwrap_or_default();
         return PullRequestOutcome::Error(format!(
-            "Failed to commit `{}` to `{}:{}` (HTTP {}).",
-            clean_file_path,
-            working_repo,
-            new_branch,
-            put_resp.status()
+            "Failed to commit `{}` to `{}:{}` (HTTP {}: {}).",
+            clean_file_path, working_repo, commit_branch, status, err_detail
         ));
     }
 
@@ -1751,9 +1723,9 @@ pub async fn create_remediation_pull_request(
         let fork_owner = pat_user
             .as_deref()
             .unwrap_or("leo-gold-fast");
-        format!("{}:{}", fork_owner, new_branch)
+        format!("{}:{}", fork_owner, commit_branch)
     } else {
-        new_branch.clone()
+        commit_branch.clone()
     };
 
     let upstream_pulls_url = format!("https://api.github.com/repos/{}/pulls", clean_repo);
@@ -1784,7 +1756,7 @@ pub async fn create_remediation_pull_request(
                 return PullRequestOutcome::Created {
                     pr_number,
                     pr_url,
-                    branch_name: new_branch,
+                    branch_name: commit_branch,
                 };
             }
         }
@@ -2224,10 +2196,7 @@ pub mod templates {
                     &report.repo_full_name,
                     &report.default_branch,
                     &f.file_path,
-                    &f.line_reference,
                     &f.cve_id,
-                    &f.title,
-                    &f.remediation_patch,
                 )
                 .unwrap_or_default();
                 findings_html.push_str(&format!(

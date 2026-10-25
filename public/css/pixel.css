@@ -1510,28 +1510,39 @@ body::before {
   width: 100%;
   background: var(--terminal-bg);
   border: 3px solid var(--border-blue);
-  padding: 34px 24px;
-  overflow-x: auto;
-}
-
-.mermaid-lr-track {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  min-width: 100%;
+  padding: 26px 20px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   gap: 0;
 }
 
+.mermaid-snake-row {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  width: 100%;
+  gap: 0;
+}
+
+.mermaid-snake-row.reverse-row {
+  flex-direction: row-reverse;
+}
+
 .mermaid-node-box {
-  min-width: 165px;
-  max-width: 205px;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 240px;
   background: #0d1630;
   border: 3px solid var(--buzz-cyan);
   box-shadow: 4px 4px 0 0 var(--border-dark);
-  padding: 16px 16px;
+  padding: 14px 12px;
   text-align: center;
   cursor: pointer;
-  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   transition: transform 0.08s steps(2, end), border-color 0.1s, background 0.1s;
 }
 
@@ -1559,7 +1570,7 @@ body::before {
 .mermaid-node-layer {
   display: inline-block;
   font-family: var(--font-display);
-  font-size: 0.56rem;
+  font-size: 0.54rem;
   color: var(--buzz-cyan);
   background: #060a17;
   border: 1px solid var(--border-blue);
@@ -1575,37 +1586,39 @@ body::before {
 .mermaid-node-title {
   font-family: var(--font-code);
   font-weight: 600;
-  font-size: 0.96rem;
+  font-size: 0.92rem;
   color: var(--text-main);
   line-height: 1.35;
+  word-break: break-word;
 }
 
-/* Horizontal Arrow Between Components (───►) */
+/* Horizontal Arrow Between Components Within a Row (───► or ◄───) */
 .mermaid-arrow-lr {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 112px;
-  padding: 0 6px;
+  width: 96px;
+  padding: 0 4px;
   flex-shrink: 0;
 }
 
 .mermaid-arrow-caption {
   font-family: var(--font-code);
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   color: var(--buzz-yellow);
   background: #091024;
   border: 1px solid var(--border-blue);
-  padding: 2px 8px;
-  margin-bottom: 6px;
+  padding: 2px 6px;
+  margin-bottom: 5px;
   white-space: nowrap;
-  max-width: 145px;
+  max-width: 92px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.mermaid-arrow-lr.secondary-edge .mermaid-arrow-caption {
+.mermaid-arrow-lr.secondary-edge .mermaid-arrow-caption,
+.mermaid-snake-uturn.secondary-edge .mermaid-arrow-caption {
   color: #9bb1e0;
 }
 
@@ -1613,6 +1626,47 @@ body::before {
   width: 100%;
   height: 16px;
   display: block;
+}
+
+/* Vertical Snake Wraparound Turn Connector Between Rows */
+.mermaid-snake-uturn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 6px 10%;
+}
+
+.mermaid-snake-uturn.uturn-right {
+  justify-content: flex-end;
+}
+
+.mermaid-snake-uturn.uturn-left {
+  justify-content: flex-start;
+}
+
+.mermaid-uturn-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mermaid-uturn-svg {
+  width: 22px;
+  height: 36px;
+  display: block;
+  flex-shrink: 0;
+}
+
+@media (max-width: 680px) {
+  .mermaid-snake-row,
+  .mermaid-snake-row.reverse-row {
+    flex-direction: column;
+    align-items: center;
+  }
+  .mermaid-node-box {
+    width: 100%;
+    max-width: 100%;
+  }
 }
 
 /* Compact Bottom Detail Bar When a Node is Clicked */

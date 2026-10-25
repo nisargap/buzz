@@ -2789,87 +2789,179 @@ pub mod templates {
     };
 
     pub fn render_component_diagram(repo_full_name: &str, diagram: &CodebaseDiagram) -> String {
-        let mut horizontal_flow_html = String::new();
+        const NODES_PER_ROW: usize = 3;
+        let mut snake_rows_html = String::new();
         let mut initial_detail_html = String::new();
 
-        for (idx, node) in diagram.nodes.iter().enumerate() {
-            let layer_upper = node.layer.to_uppercase();
-            let is_primary = if !node.importance.trim().is_empty() {
-                node.importance.trim().eq_ignore_ascii_case("primary")
+        for (row_idx, chunk) in diagram.nodes.chunks(NODES_PER_ROW).enumerate() {
+            let is_reverse_row = row_idx % 2 == 1;
+            let row_class = if is_reverse_row {
+                "mermaid-snake-row reverse-row"
             } else {
-                idx < 3 || layer_upper != "DATA"
+                "mermaid-snake-row"
             };
-            let tier_class = if is_primary {
-                "primary-state"
-            } else {
-                "secondary-state"
-            };
-            let selected_class = if idx == 0 { "selected-state" } else { "" };
 
-            let mut file_pills_html = String::new();
-            for fp in &node.files {
-                let clean_fp = escape_html(fp);
-                let gh_url = format!(
-                    "https://github.com/{}/blob/HEAD/{}",
-                    escape_html(repo_full_name),
-                    clean_fp
+            let mut row_inner_html = String::new();
+
+            for (col_idx, node) in chunk.iter().enumerate() {
+                let global_idx = row_idx * NODES_PER_ROW + col_idx;
+                let layer_upper = node.layer.to_uppercase();
+                let is_primary = if !node.importance.trim().is_empty() {
+                    node.importance.trim().eq_ignore_ascii_case("primary")
+                } else {
+                    global_idx < 3 || layer_upper != "DATA"
+                };
+                let tier_class = if is_primary {
+                    "primary-state"
+                } else {
+                    "secondary-state"
+                };
+                let selected_class = if global_idx == 0 {
+                    "selected-state"
+                } else {
+                    ""
+                };
+
+                let mut file_pills_html = String::new();
+                for fp in &node.files {
+                    let clean_fp = escape_html(fp);
+                    let gh_url = format!(
+                        "https://github.com/{}/blob/HEAD/{}",
+                        escape_html(repo_full_name),
+                        clean_fp
+                    );
+                    file_pills_html.push_str(&format!(
+                        r#"<a href="{url}" target="_blank" rel="noopener noreferrer" class="diag-file-pill">📄 {fp} ↗</a>"#,
+                        url = gh_url,
+                        fp = clean_fp
+                    ));
+                }
+
+                let detail_payload = format!(
+                    r#"<div class="sm-inspector-title">[{layer}] {title}</div>
+                    <p class="sm-inspector-desc">{desc}</p>
+                    <div class="diag-files-row">{files}</div>"#,
+                    layer = escape_html(&layer_upper),
+                    title = escape_html(&node.label),
+                    desc = escape_html(&node.description),
+                    files = file_pills_html
                 );
-                file_pills_html.push_str(&format!(
-                    r#"<a href="{url}" target="_blank" rel="noopener noreferrer" class="diag-file-pill">📄 {fp} ↗</a>"#,
-                    url = gh_url,
-                    fp = clean_fp
+
+                if global_idx == 0 {
+                    initial_detail_html = detail_payload.clone();
+                }
+
+                row_inner_html.push_str(&format!(
+                    r#"<div
+                        id="sm-node-{node_id}"
+                        class="mermaid-node-box sm-state-node {tier_class} {selected_class}"
+                        onclick="window.buzzSelectStateNode(this)"
+                    >
+                        <span class="mermaid-node-layer">{layer}</span>
+                        <div class="mermaid-node-title">{title}</div>
+                        <template class="sm-node-inspector-template">{detail_payload}</template>
+                    </div>"#,
+                    node_id = escape_html(&node.id),
+                    tier_class = tier_class,
+                    selected_class = selected_class,
+                    layer = escape_html(&layer_upper),
+                    title = escape_html(&node.label),
+                    detail_payload = detail_payload
                 ));
+
+                // Horizontal arrow to the next component within this same row
+                if let Some(next_in_row) = chunk.get(col_idx + 1) {
+                    let matching_edge = diagram
+                        .edges
+                        .iter()
+                        .find(|e| e.from == node.id && e.to == next_in_row.id)
+                        .or_else(|| diagram.edges.iter().find(|e| e.from == node.id));
+
+                    let raw_label = matching_edge
+                        .map(|e| e.label.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or("Dataflow");
+                    let short_label: String = raw_label.chars().take(16).collect();
+
+                    let edge_is_secondary = matching_edge
+                        .map(|e| e.importance.trim().eq_ignore_ascii_case("secondary"))
+                        .unwrap_or(!is_primary);
+                    let edge_class = if edge_is_secondary {
+                        "secondary-edge"
+                    } else {
+                        "primary-edge"
+                    };
+                    let stroke_color = if edge_is_secondary {
+                        "#6882B8"
+                    } else {
+                        "#FFE047"
+                    };
+                    let dash_attr = if edge_is_secondary {
+                        r#"stroke-dasharray="4 4""#
+                    } else {
+                        ""
+                    };
+
+                    // Point right (───►) on even rows, and point left (◄───) on odd reverse rows!
+                    let arrow_svg = if is_reverse_row {
+                        format!(
+                            r##"<svg class="mermaid-arrow-svg-lr" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true">
+                                <line x1="12" y1="8" x2="100" y2="8" stroke="{stroke}" stroke-width="2.5" {dash} />
+                                <polygon points="14,2 0,8 14,14" fill="{stroke}" />
+                            </svg>"##,
+                            stroke = stroke_color,
+                            dash = dash_attr
+                        )
+                    } else {
+                        format!(
+                            r##"<svg class="mermaid-arrow-svg-lr" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true">
+                                <line x1="0" y1="8" x2="88" y2="8" stroke="{stroke}" stroke-width="2.5" {dash} />
+                                <polygon points="86,2 100,8 86,14" fill="{stroke}" />
+                            </svg>"##,
+                            stroke = stroke_color,
+                            dash = dash_attr
+                        )
+                    };
+
+                    row_inner_html.push_str(&format!(
+                        r#"<div class="mermaid-arrow-lr {edge_class}">
+                            <span class="mermaid-arrow-caption" title="{full_label}">{short_label}</span>
+                            {arrow_svg}
+                        </div>"#,
+                        edge_class = edge_class,
+                        full_label = escape_html(raw_label),
+                        short_label = escape_html(&short_label),
+                        arrow_svg = arrow_svg
+                    ));
+                }
             }
 
-            let detail_payload = format!(
-                r#"<div class="sm-inspector-title">[{layer}] {title}</div>
-                <p class="sm-inspector-desc">{desc}</p>
-                <div class="diag-files-row">{files}</div>"#,
-                layer = escape_html(&layer_upper),
-                title = escape_html(&node.label),
-                desc = escape_html(&node.description),
-                files = file_pills_html
-            );
-
-            if idx == 0 {
-                initial_detail_html = detail_payload.clone();
-            }
-
-            horizontal_flow_html.push_str(&format!(
-                r#"<div
-                    id="sm-node-{node_id}"
-                    class="mermaid-node-box sm-state-node {tier_class} {selected_class}"
-                    onclick="window.buzzSelectStateNode(this)"
-                >
-                    <span class="mermaid-node-layer">{layer}</span>
-                    <div class="mermaid-node-title">{title}</div>
-                    <template class="sm-node-inspector-template">{detail_payload}</template>
-                </div>"#,
-                node_id = escape_html(&node.id),
-                tier_class = tier_class,
-                selected_class = selected_class,
-                layer = escape_html(&layer_upper),
-                title = escape_html(&node.label),
-                detail_payload = detail_payload
+            snake_rows_html.push_str(&format!(
+                r#"<div class="{row_class}">{row_inner_html}</div>"#,
+                row_class = row_class,
+                row_inner_html = row_inner_html
             ));
 
-            // Render horizontal arrow to the next component in the pipeline
-            if let Some(next_node) = diagram.nodes.get(idx + 1) {
+            // If there is another row after this one, render the vertical snake wraparound U-turn connector!
+            let next_row_first_idx = (row_idx + 1) * NODES_PER_ROW;
+            if let (Some(last_node_in_row), Some(next_row_first_node)) =
+                (chunk.last(), diagram.nodes.get(next_row_first_idx))
+            {
                 let matching_edge = diagram
                     .edges
                     .iter()
-                    .find(|e| e.from == node.id && e.to == next_node.id)
-                    .or_else(|| diagram.edges.iter().find(|e| e.from == node.id));
+                    .find(|e| e.from == last_node_in_row.id && e.to == next_row_first_node.id)
+                    .or_else(|| diagram.edges.iter().find(|e| e.from == last_node_in_row.id));
 
                 let raw_label = matching_edge
                     .map(|e| e.label.as_str())
                     .filter(|s| !s.trim().is_empty())
-                    .unwrap_or("Dataflow");
-                let short_label: String = raw_label.chars().take(22).collect();
+                    .unwrap_or("Next Stage");
+                let short_label: String = raw_label.chars().take(18).collect();
 
                 let edge_is_secondary = matching_edge
                     .map(|e| e.importance.trim().eq_ignore_ascii_case("secondary"))
-                    .unwrap_or(!is_primary);
+                    .unwrap_or(false);
                 let edge_class = if edge_is_secondary {
                     "secondary-edge"
                 } else {
@@ -2885,15 +2977,23 @@ pub mod templates {
                 } else {
                     ""
                 };
+                let side_class = if is_reverse_row {
+                    "uturn-left"
+                } else {
+                    "uturn-right"
+                };
 
-                horizontal_flow_html.push_str(&format!(
-                    r##"<div class="mermaid-arrow-lr {edge_class}">
-                        <span class="mermaid-arrow-caption" title="{full_label}">{short_label}</span>
-                        <svg class="mermaid-arrow-svg-lr" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true">
-                            <line x1="0" y1="8" x2="88" y2="8" stroke="{stroke}" stroke-width="2.5" {dash} />
-                            <polygon points="86,2 100,8 86,14" fill="{stroke}" />
-                        </svg>
+                snake_rows_html.push_str(&format!(
+                    r##"<div class="mermaid-snake-uturn {side_class} {edge_class}">
+                        <div class="mermaid-uturn-inner">
+                            <span class="mermaid-arrow-caption" title="{full_label}" style="margin-bottom:0;">{short_label}</span>
+                            <svg class="mermaid-uturn-svg" viewBox="0 0 22 36" aria-hidden="true">
+                                <line x1="11" y1="0" x2="11" y2="26" stroke="{stroke}" stroke-width="2.5" {dash} />
+                                <polygon points="4,24 11,36 18,24" fill="{stroke}" />
+                            </svg>
+                        </div>
                     </div>"##,
+                    side_class = side_class,
                     edge_class = edge_class,
                     full_label = escape_html(raw_label),
                     short_label = escape_html(&short_label),
@@ -2916,11 +3016,9 @@ pub mod templates {
                     </div>
                 </div>
 
-                <!-- Simple Horizontal Mermaid-Style Flowchart (Left to Right) -->
+                <!-- Snake-Wraparound Mermaid-Style Flowchart (Zero Horizontal Scroll) -->
                 <div class="mermaid-lr-stage">
-                    <div class="mermaid-lr-track">
-                        {horizontal_flow_html}
-                    </div>
+                    {snake_rows_html}
                 </div>
 
                 <!-- Compact Selected Component Detail Bar -->
@@ -2930,7 +3028,7 @@ pub mod templates {
             </div>"#,
             repo = escape_html(repo_full_name),
             summary = escape_html(&diagram.architecture_summary),
-            horizontal_flow_html = horizontal_flow_html,
+            snake_rows_html = snake_rows_html,
             initial_detail_html = initial_detail_html
         )
     }

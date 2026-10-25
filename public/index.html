@@ -124,84 +124,100 @@
           </button>
         </div>
 
-        <!-- Connected GitHub Repo Dropdown Slot (only shown when signed in) -->
+        <!-- Shown when logged out: requires GitHub login before scanning -->
         <div
-          id="connected-repos-slot"
-          style="margin-top: 12px; display: none;"
-        ></div>
-
-        <div class="wizard-divider">— OR ENTER ANY GITHUB REPOSITORY —</div>
-
-        <!-- HTMX Form posting to Rust Vercel Function: POST /api/analyze -->
-        <form
-          id="analyze-form"
-          hx-post="/api/analyze"
-          hx-target="#report-container"
-          hx-swap="innerHTML"
-          hx-on::before-request="window.buzzStartAnalysisPage()"
-          hx-on::after-request="window.buzzFinishAnalysisPage(event)"
+          id="step2-logged-out-notice"
+          style="margin-top: 18px; padding: 16px; background: var(--terminal-bg); border: 2px dashed var(--border-blue); text-align: center;"
         >
-          <input
-            id="repo-input"
-            name="repo"
-            type="text"
-            class="pixel-input"
-            placeholder="owner/repo (e.g. nisargap/buzz)"
-            value="nisargap/buzz"
-            required
-            autocomplete="off"
-          />
-
-          <div class="preset-chips">
-            <button
-              type="button"
-              class="chip-btn"
-              onclick="window.buzzSelectRepo('nisargap/buzz')"
-            >
-              nisargap/buzz
-            </button>
-            <button
-              type="button"
-              class="chip-btn"
-              onclick="window.buzzSelectRepo('expressjs/express')"
-            >
-              expressjs/express
-            </button>
-            <button
-              type="button"
-              class="chip-btn"
-              onclick="window.buzzSelectRepo('pallets/flask')"
-            >
-              pallets/flask
-            </button>
+          <div style="font-family: var(--font-display); font-size: 0.72rem; color: var(--buzz-yellow); margin-bottom: 6px;">
+            🔒 SIGN IN REQUIRED TO SCAN REPOSITORIES
           </div>
+          <div style="font-family: var(--font-code); font-size: 0.8rem; color: var(--text-muted);">
+            Connect your GitHub account above to select a repository, run 1M-context CVE audits, and open Pull Request patches.
+          </div>
+        </div>
 
-          <button
-            type="submit"
-            class="pixel-btn pixel-btn-primary"
-            style="width: 100%; margin-top: 20px;"
+        <!-- Shown ONLY when signed in with GitHub -->
+        <div id="step2-authenticated-area" style="display: none;">
+          <!-- Connected GitHub Repo Dropdown Slot (only shown when signed in) -->
+          <div
+            id="connected-repos-slot"
+            style="margin-top: 12px;"
+          ></div>
+
+          <div class="wizard-divider">— OR ENTER ANY GITHUB REPOSITORY —</div>
+
+          <!-- HTMX Form posting to Rust Vercel Function: POST /api/analyze -->
+          <form
+            id="analyze-form"
+            hx-post="/api/analyze"
+            hx-target="#report-container"
+            hx-swap="innerHTML"
+            hx-on::before-request="window.buzzStartAnalysisPage(event)"
+            hx-on::after-request="window.buzzFinishAnalysisPage(event)"
           >
-            ⚡ ANALYZE REPO IN 1M CONTEXT
-          </button>
-        </form>
+            <input
+              id="repo-input"
+              name="repo"
+              type="text"
+              class="pixel-input"
+              placeholder="owner/repo (e.g. nisargap/buzz)"
+              value="nisargap/buzz"
+              required
+              autocomplete="off"
+            />
 
-        <!-- Persisted Repository Audits (Strictly shown ONLY when signed in) -->
-        <div id="saved-audits-panel" class="saved-audits-panel" style="display: none;">
-          <div class="saved-audits-header">
-            <span class="saved-audits-title">📂 YOUR SAVED REPOSITORY AUDITS</span>
+            <div class="preset-chips">
+              <button
+                type="button"
+                class="chip-btn"
+                onclick="window.buzzSelectRepo('nisargap/buzz')"
+              >
+                nisargap/buzz
+              </button>
+              <button
+                type="button"
+                class="chip-btn"
+                onclick="window.buzzSelectRepo('expressjs/express')"
+              >
+                expressjs/express
+              </button>
+              <button
+                type="button"
+                class="chip-btn"
+                onclick="window.buzzSelectRepo('pallets/flask')"
+              >
+                pallets/flask
+              </button>
+            </div>
+
             <button
-              type="button"
-              class="pixel-btn pixel-btn-sm"
-              hx-get="/api/scans"
-              hx-target="#saved-audits-slot"
-              hx-swap="innerHTML"
+              type="submit"
+              class="pixel-btn pixel-btn-primary"
+              style="width: 100%; margin-top: 20px;"
             >
-              ↻ REFRESH
+              ⚡ ANALYZE REPO IN 1M CONTEXT
             </button>
-          </div>
-          <div id="saved-audits-slot">
-            <div style="font-size: 0.74rem; color: var(--text-dim);">
-              Loading saved repository audits...
+          </form>
+
+          <!-- Persisted Repository Audits (Strictly shown ONLY when signed in) -->
+          <div id="saved-audits-panel" class="saved-audits-panel">
+            <div class="saved-audits-header">
+              <span class="saved-audits-title">📂 YOUR SAVED REPOSITORY AUDITS</span>
+              <button
+                type="button"
+                class="pixel-btn pixel-btn-sm"
+                hx-get="/api/scans"
+                hx-target="#saved-audits-slot"
+                hx-swap="innerHTML"
+              >
+                ↻ REFRESH
+              </button>
+            </div>
+            <div id="saved-audits-slot">
+              <div style="font-size: 0.74rem; color: var(--text-dim);">
+                Loading saved repository audits...
+              </div>
             </div>
           </div>
         </div>
@@ -864,7 +880,12 @@
         logEl.scrollTop = logEl.scrollHeight;
       }
 
-      window.buzzStartAnalysisPage = async function () {
+      window.buzzStartAnalysisPage = async function (event) {
+        if (!(githubUserHandle || githubProviderToken || supabaseUserId)) {
+          if (event && event.preventDefault) event.preventDefault();
+          await window.buzzConnectGitHub();
+          return;
+        }
         stopAllAnalysisTimers();
 
         const repoInput = document.getElementById('repo-input');
@@ -1168,11 +1189,12 @@
           }
         }
 
-        // 2. Update Step 2 Auth Button, Sign Out Button, and Saved Audits / Connected Repos visibility
+        // 2. Update Step 2 Auth Button, Sign Out Button, and Authenticated Area visibility
         const dot = document.getElementById('github-auth-dot');
         const label = document.getElementById('github-auth-label');
         const signOutBtn = document.getElementById('github-signout-btn');
-        const savedAuditsPanel = document.getElementById('saved-audits-panel');
+        const authArea = document.getElementById('step2-authenticated-area');
+        const loggedOutNotice = document.getElementById('step2-logged-out-notice');
         const savedAuditsSlot = document.getElementById('saved-audits-slot');
         const connectedReposSlot = document.getElementById('connected-repos-slot');
 
@@ -1181,18 +1203,16 @@
             dot.className = 'led-dot';
             label.textContent = '✓ SIGNED IN AS @' + displayHandle + ' (GITHUB OAUTH ACTIVE)';
             if (signOutBtn) signOutBtn.style.display = 'inline-flex';
-            if (savedAuditsPanel) savedAuditsPanel.style.display = 'block';
-            if (connectedReposSlot) connectedReposSlot.style.display = 'block';
+            if (authArea) authArea.style.display = 'block';
+            if (loggedOutNotice) loggedOutNotice.style.display = 'none';
           } else {
             dot.className = 'led-dot warn';
             label.textContent = 'SIGN IN WITH GITHUB (SUPABASE AUTH)';
             if (signOutBtn) signOutBtn.style.display = 'none';
-            if (savedAuditsPanel) savedAuditsPanel.style.display = 'none';
+            if (authArea) authArea.style.display = 'none';
+            if (loggedOutNotice) loggedOutNotice.style.display = 'block';
             if (savedAuditsSlot) savedAuditsSlot.innerHTML = '';
-            if (connectedReposSlot) {
-              connectedReposSlot.style.display = 'none';
-              connectedReposSlot.innerHTML = '';
-            }
+            if (connectedReposSlot) connectedReposSlot.innerHTML = '';
           }
         }
       }

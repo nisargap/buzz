@@ -19,17 +19,40 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
         .headers()
         .get("x-github-token")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     let user_id = req
         .headers()
         .get("x-supabase-user-id")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     let gh_user = req
         .headers()
         .get("x-github-user")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    // Enforce authentication: do not allow scanning unless logged in with GitHub via Supabase Auth
+    if gh_token.is_none() && user_id.is_none() && gh_user.is_none() {
+        let unauthorized_html = r#"<div class="pixel-box-gold" style="padding:28px;text-align:center;">
+            <div style="font-family:var(--font-display);color:var(--buzz-yellow);font-size:0.95rem;margin-bottom:12px;">
+                🔒 GITHUB SIGN-IN REQUIRED TO ANALYZE REPOSITORIES
+            </div>
+            <p style="font-family:var(--font-code);color:var(--text-muted);font-size:0.88rem;margin-bottom:18px;">
+                Please sign in with your GitHub account via Supabase Auth to run 1M-context repository scans and create Pull Request patches.
+            </p>
+            <button type="button" class="pixel-btn pixel-btn-primary" onclick="window.buzzConnectGitHub()">
+                ⚡ SIGN IN WITH GITHUB
+            </button>
+        </div>"#;
+
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/html; charset=utf-8")
+            .body(Body::Text(unauthorized_html.to_string()))?);
+    }
 
     let repo_target = extract_repo_from_body(req.body())
         .unwrap_or_else(|| "nisargap/buzz".to_string());

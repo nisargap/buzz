@@ -17,7 +17,7 @@
   <canvas id="pixel-rain-canvas" aria-hidden="true"></canvas>
 
   <!-- Global Persistent User Auth Status Bar (Visible on Front Page & All Wizard Steps) -->
-  <header id="global-auth-bar" class="global-auth-bar">
+  <header id="global-auth-bar" class="global-auth-bar" aria-label="GitHub account">
     <!-- Shown when signed out -->
     <button
       id="global-signin-btn"
@@ -296,18 +296,9 @@
           <div style="font-family: var(--font-display); font-size: 0.72rem; color: var(--buzz-yellow); margin-bottom: 8px;">
             🔒 SIGN IN REQUIRED TO SCAN REPOSITORIES
           </div>
-          <div style="font-family: var(--font-code); font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">
-            Connect your GitHub account to select a repository, run 1M-context CVE audits, and open Pull Request patches.
+          <div style="font-family: var(--font-code); font-size: 0.8rem; color: var(--text-muted);">
+            Use Sign in with GitHub in the top-right to select a repository, run 1M-context CVE audits, and open Pull Request patches.
           </div>
-          <button
-            id="github-auth-btn"
-            type="button"
-            class="pixel-btn pixel-btn-github"
-            onclick="window.buzzConnectGitHub()"
-          >
-            <span class="led-dot warn"></span>
-            <span>SIGN IN WITH GITHUB (SUPABASE AUTH)</span>
-          </button>
         </div>
 
         <!-- Shown ONLY when signed in with GitHub -->
@@ -396,7 +387,7 @@
                 class="pixel-checkbox-input"
                 checked
               />
-              <span>🎨 Generate Visual Heat-Saturated Neural Map of Codebase</span>
+              <span>🎨 Generate Interactive State Machine &amp; User-Flow Diagram</span>
             </label>
 
             <button
@@ -1795,6 +1786,61 @@
         if (form && window.htmx) {
           htmx.trigger(form, 'submit');
         }
+      };
+
+      // Interactive State Machine Diagram Click & Filter Handlers
+      window.buzzSelectStateNode = function (nodeEl) {
+        if (!nodeEl) return;
+        const allNodes = document.querySelectorAll('.sm-state-node');
+        allNodes.forEach(function (el) {
+          el.classList.remove('selected-state');
+        });
+        nodeEl.classList.add('selected-state');
+
+        const tmpl = nodeEl.querySelector('.sm-node-inspector-template');
+        const inspector = document.getElementById('sm-inspector-panel');
+        if (tmpl && inspector) {
+          inspector.innerHTML = tmpl.innerHTML;
+        }
+      };
+
+      window.buzzJumpToStateNode = function (nodeId) {
+        if (!nodeId) return;
+        const target = document.getElementById('sm-node-' + nodeId);
+        if (target) {
+          window.buzzSelectStateNode(target);
+          target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      };
+
+      window.buzzFilterDiagramFlows = function (tierFilter, btnEl) {
+        if (btnEl) {
+          const allBtns = document.querySelectorAll('.sm-filter-btn');
+          allBtns.forEach(function (b) {
+            b.classList.remove('active');
+          });
+          btnEl.classList.add('active');
+        }
+
+        const edges = document.querySelectorAll('#sm-flow-canvas .sm-transition-edge');
+        edges.forEach(function (edgeEl) {
+          const edgeTier = edgeEl.getAttribute('data-flow-tier') || 'primary';
+          if (tierFilter === 'all' || edgeTier === tierFilter) {
+            edgeEl.classList.remove('hidden-by-filter');
+          } else {
+            edgeEl.classList.add('hidden-by-filter');
+          }
+        });
+
+        const nodes = document.querySelectorAll('#sm-flow-canvas .sm-state-node');
+        nodes.forEach(function (nodeEl) {
+          const nodeTier = nodeEl.getAttribute('data-flow-tier') || 'primary';
+          if (tierFilter === 'all' || nodeTier === tierFilter) {
+            nodeEl.style.opacity = '1';
+          } else {
+            nodeEl.style.opacity = '0.42';
+          }
+        });
       };
 
       // 5. Supabase GitHub OAuth & HTMX Header Bridge

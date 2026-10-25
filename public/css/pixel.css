@@ -428,6 +428,99 @@ body::before {
 }
 
 /* ==========================================================================
+   EMPTY LIGHTNING BOLT 1M CONTEXT LOADER & AUTO-COMPACT STAGE
+   ========================================================================== */
+
+.bolt-loader-stage {
+  margin-top: 22px;
+  padding: 24px 20px;
+  background: var(--terminal-bg);
+  border: 3px solid var(--buzz-yellow);
+  box-shadow: inset 0 0 24px rgba(255, 224, 71, 0.08);
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+
+.bolt-loader-stage.compacting {
+  border-color: var(--buzz-cyan);
+  box-shadow:
+    0 0 24px rgba(72, 209, 255, 0.45),
+    inset 0 0 30px rgba(72, 209, 255, 0.22);
+  animation: compact-pulse 0.35s steps(2, end) 3;
+}
+
+@keyframes compact-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.97); }
+}
+
+.bolt-gauge-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+}
+
+.bolt-gauge-svg {
+  width: 156px;
+  height: 156px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.7));
+}
+
+.bolt-scale-ticks {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 112px;
+  font-family: var(--font-code);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  text-align: left;
+  padding-bottom: 18px;
+}
+
+.bolt-scale-ticks span.active-tick {
+  color: var(--buzz-yellow);
+  font-weight: 600;
+}
+
+.context-counter-readout {
+  font-family: var(--font-display);
+  font-size: 0.92rem;
+  color: var(--buzz-yellow);
+  letter-spacing: 1px;
+}
+
+.context-sub-readout {
+  font-family: var(--font-code);
+  font-size: 0.78rem;
+  color: var(--buzz-cyan);
+  min-height: 1.3em;
+}
+
+.compact-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  background: #0b1630;
+  border: 2px solid var(--border-blue);
+  color: var(--text-muted);
+}
+
+.compact-status-pill.triggered {
+  border-color: var(--buzz-green);
+  color: var(--buzz-green);
+  background: rgba(46, 230, 138, 0.1);
+}
+
+/* ==========================================================================
    REPORT CONTAINER & VULNERABILITY CARDS (STEP 3)
    ========================================================================== */
 

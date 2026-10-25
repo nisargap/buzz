@@ -65,8 +65,26 @@ impl AppConfig {
     }
 }
 
+fn dotenv_paths() -> &'static [&'static str] {
+    // vercel dev launches Rust functions from a temporary Lambda directory.
+    // Debug builds can fall back to the checkout; release builds never do.
+    #[cfg(debug_assertions)]
+    {
+        &[
+            ".env.local",
+            ".env",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/.env.local"),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/.env"),
+        ]
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        &[".env.local", ".env"]
+    }
+}
+
 fn load_dotenv_files() {
-    for path in [".env.local", ".env"] {
+    for path in dotenv_paths() {
         if let Ok(contents) = std::fs::read_to_string(path) {
             for line in contents.lines() {
                 let trimmed = line.trim();
@@ -2914,6 +2932,22 @@ fn urlencoding_simple(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_dotenv_paths_only_use_checkout_in_debug_builds() {
+        let paths = dotenv_paths();
+        assert_eq!(&paths[..2], &[".env.local", ".env"]);
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            &paths[2..],
+            &[
+                concat!(env!("CARGO_MANIFEST_DIR"), "/.env.local"),
+                concat!(env!("CARGO_MANIFEST_DIR"), "/.env"),
+            ]
+        );
+        #[cfg(not(debug_assertions))]
+        assert_eq!(paths.len(), 2);
+    }
 
     #[tokio::test]
     async fn test_live_full_repo_tree_loader_on_nisargap_buzz() {

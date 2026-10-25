@@ -79,6 +79,11 @@ html, body {
   background-attachment: fixed;
 }
 
+body {
+  display: flex;
+  flex-direction: column;
+}
+
 /* Pixelated dither matrix overlay on top of the stepped gradient */
 body::before {
   content: "";
@@ -116,7 +121,7 @@ body::before {
 .wizard-shell {
   position: relative;
   z-index: 2;
-  min-height: 100vh;
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1051,10 +1056,35 @@ body::before {
    ========================================================================== */
 
 .auth-bar-row {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
   width: 100%;
+  padding: 20px 24px 0;
+}
+
+.auth-bar-row .pixel-btn {
+  width: auto;
+  max-width: 100%;
+  min-height: 44px;
+}
+
+.auth-status {
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  font-family: var(--font-code);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.auth-status .led-dot {
+  flex-shrink: 0;
 }
 
 .saved-audits-panel {

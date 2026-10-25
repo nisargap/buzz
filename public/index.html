@@ -15,6 +15,31 @@
   <!-- Pixelated Rain Animation Canvas over the Dark-to-Dark-Blue Gradient Fade -->
   <canvas id="pixel-rain-canvas" aria-hidden="true"></canvas>
 
+  <!-- Global GitHub account controls, shared by all wizard steps -->
+  <header class="auth-bar-row" aria-label="GitHub account">
+    <button
+      id="github-auth-btn"
+      type="button"
+      class="pixel-btn pixel-btn-github pixel-btn-sm"
+      onclick="window.buzzConnectGitHub()"
+    >
+      SIGN IN WITH GITHUB
+    </button>
+    <span id="github-auth-status" class="auth-status" style="display: none;" role="status">
+      <span class="led-dot" aria-hidden="true"></span>
+      <span id="github-auth-label"></span>
+    </span>
+    <button
+      id="github-signout-btn"
+      type="button"
+      class="pixel-btn pixel-btn-sm"
+      style="display: none; border-color: var(--sev-critical); color: var(--sev-critical);"
+      onclick="window.buzzSignOutGitHub()"
+    >
+      SIGN OUT
+    </button>
+  </header>
+
   <main class="wizard-shell">
 
     <!-- ================================================================== -->
@@ -58,34 +83,10 @@
       </div>
 
       <div class="pixel-box-gold">
-        <h2 class="wizard-title">CONNECT GITHUB &amp; PICK REPO</h2>
+        <h2 class="wizard-title">PICK A REPOSITORY</h2>
         <p class="wizard-subtitle">
           Gemini 4 Argon will load your repository into its 1M context window and cross-reference against the CVEProject/cvelistV5 datasource.
         </p>
-
-        <!-- Supabase GitHub OAuth Connect & Sign Out Row -->
-        <div class="auth-bar-row">
-          <button
-            id="github-auth-btn"
-            type="button"
-            class="pixel-btn pixel-btn-github"
-            style="flex: 1;"
-            onclick="window.buzzConnectGitHub()"
-          >
-            <span id="github-auth-dot" class="led-dot warn"></span>
-            <span id="github-auth-label">SIGN IN WITH GITHUB (SUPABASE AUTH)</span>
-          </button>
-
-          <button
-            id="github-signout-btn"
-            type="button"
-            class="pixel-btn pixel-btn-sm"
-            style="display: none; border-color: var(--sev-critical); color: var(--sev-critical);"
-            onclick="window.buzzSignOutGitHub()"
-          >
-            SIGN OUT
-          </button>
-        </div>
 
         <!-- Connected GitHub Repo Dropdown Slot (populated via HTMX GET /api/repos) -->
         <div
@@ -1047,19 +1048,16 @@
       let githubUserHandle = sessionStorage.getItem('buzz_gh_user') || '';
 
       function updateAuthBadge() {
-        const dot = document.getElementById('github-auth-dot');
+        const authBtn = document.getElementById('github-auth-btn');
+        const status = document.getElementById('github-auth-status');
         const label = document.getElementById('github-auth-label');
         const signOutBtn = document.getElementById('github-signout-btn');
-        if (!dot || !label) return;
-        if (githubUserHandle || githubProviderToken || supabaseUserId) {
-          dot.className = 'led-dot';
-          label.textContent = 'GITHUB LOGGED IN: @' + (githubUserHandle || 'CONNECTED');
-          if (signOutBtn) signOutBtn.style.display = 'inline-flex';
-        } else {
-          dot.className = 'led-dot warn';
-          label.textContent = 'SIGN IN WITH GITHUB (SUPABASE AUTH)';
-          if (signOutBtn) signOutBtn.style.display = 'none';
-        }
+        if (!authBtn || !status || !label || !signOutBtn) return;
+        const connected = Boolean(githubUserHandle || githubProviderToken || supabaseUserId);
+        authBtn.style.display = connected ? 'none' : 'inline-flex';
+        status.style.display = connected ? 'inline-flex' : 'none';
+        label.textContent = connected ? (githubUserHandle ? '@' + githubUserHandle : 'GITHUB CONNECTED') : '';
+        signOutBtn.style.display = connected ? 'inline-flex' : 'none';
       }
 
       function applySupabaseSession(session) {

@@ -1047,6 +1047,41 @@ body::before {
 }
 
 /* ==========================================================================
+   GLOBAL TOP-RIGHT USER AUTH PILL (VISIBLE ON ALL WIZARD PAGES)
+   ========================================================================== */
+
+.global-auth-bar {
+  position: fixed;
+  top: 18px;
+  right: 20px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel-bg);
+  border: 3px solid var(--buzz-green);
+  box-shadow: 4px 4px 0 0 var(--border-dark);
+  padding: 6px 12px;
+  font-family: var(--font-code);
+  font-size: 0.78rem;
+  color: var(--text-main);
+}
+
+.user-avatar-pixel {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--buzz-yellow);
+  image-rendering: pixelated;
+  display: none;
+}
+
+/* ==========================================================================
    SAVED REPO AUDITS LIST & AUTH STATUS BAR
    ========================================================================== */
 

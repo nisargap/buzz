@@ -15,6 +15,43 @@
   <!-- Pixelated Rain Animation Canvas over the Dark-to-Dark-Blue Gradient Fade -->
   <canvas id="pixel-rain-canvas" aria-hidden="true"></canvas>
 
+  <!-- Global Persistent User Auth Status Bar (Visible on Front Page & All Wizard Steps) -->
+  <header id="global-auth-bar" class="global-auth-bar">
+    <!-- Shown when signed out -->
+    <button
+      id="global-signin-btn"
+      type="button"
+      class="pixel-btn pixel-btn-sm"
+      onclick="window.buzzConnectGitHub()"
+    >
+      <span class="led-dot warn"></span>
+      <span>SIGN IN WITH GITHUB</span>
+    </button>
+
+    <!-- Shown when signed in via Supabase GitHub OAuth -->
+    <div id="global-user-pill" class="user-badge-pill" style="display: none;">
+      <img id="global-user-avatar" class="user-avatar-pixel" alt="GitHub Avatar" />
+      <span class="led-dot"></span>
+      <span id="global-user-label">@connected</span>
+      <button
+        type="button"
+        class="pixel-btn pixel-btn-sm"
+        style="padding: 4px 8px; font-size: 0.58rem;"
+        onclick="window.buzzGoToStep(2)"
+      >
+        MY REPOS &amp; AUDITS
+      </button>
+      <button
+        type="button"
+        class="pixel-btn pixel-btn-sm"
+        style="padding: 4px 8px; font-size: 0.58rem; border-color: var(--sev-critical); color: var(--sev-critical);"
+        onclick="window.buzzSignOutGitHub()"
+      >
+        SIGN OUT
+      </button>
+    </div>
+  </header>
+
   <main class="wizard-shell">
 
     <!-- ================================================================== -->
@@ -1045,32 +1082,114 @@
       const PUBLIC_SUPABASE_ANON_KEY =
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5xZGtmdWNibHdtZG14bXVuZ2V2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NDA2NjUsImV4cCI6MjEwODUxNjY2NX0.DRXe_D9liZmrR-mXbDOTU_0Ejkj1ywj5_CBdy90w6Eo';
 
+      let supabaseUserId = localStorage.getItem('buzz_sb_uid') || '';
+      let githubProviderToken = localStorage.getItem('buzz_gh_token') || '';
+      let githubUserHandle = localStorage.getItem('buzz_gh_user') || '';
+      let githubAvatarUrl = localStorage.getItem('buzz_gh_avatar') || '';
+
+      function decodeJwtPayload(jwt) {
+        try {
+          const parts = (jwt || '').split('.');
+          if (parts.length < 2) return null;
+          const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = base64 + '==='.slice((base64.length + 3) % 4);
+          return JSON.parse(window.atob(padded));
+        } catch (_) {
+          return null;
+        }
+      }
+
+      // Synchronously capture #access_token & #provider_token from URL hash BEFORE Supabase SDK strips it
+      const rawHash = window.location.hash ? window.location.hash.substring(1) : '';
+      const hashParams = new URLSearchParams(rawHash);
+      const urlAccessToken = hashParams.get('access_token') || '';
+      const urlProviderToken = hashParams.get('provider_token') || '';
+      const urlRefreshToken = hashParams.get('refresh_token') || '';
+
+      if (urlProviderToken) {
+        githubProviderToken = urlProviderToken;
+        localStorage.setItem('buzz_gh_token', githubProviderToken);
+      }
+      if (urlAccessToken) {
+        const claims = decodeJwtPayload(urlAccessToken);
+        if (claims) {
+          if (claims.sub) {
+            supabaseUserId = claims.sub;
+            localStorage.setItem('buzz_sb_uid', supabaseUserId);
+          }
+          const meta = claims.user_metadata || {};
+          const handle =
+            meta.user_name ||
+            meta.preferred_username ||
+            meta.name ||
+            claims.email ||
+            '';
+          if (handle) {
+            githubUserHandle = handle;
+            localStorage.setItem('buzz_gh_user', githubUserHandle);
+          }
+          if (meta.avatar_url) {
+            githubAvatarUrl = meta.avatar_url;
+            localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
+          }
+        }
+      }
+
       const hadOAuthCallbackOnBoot =
-        window.location.hash.indexOf('access_token=') !== -1 ||
-        window.location.hash.indexOf('provider_token=') !== -1 ||
+        Boolean(urlAccessToken) ||
+        Boolean(urlProviderToken) ||
         window.location.search.indexOf('code=') !== -1 ||
         sessionStorage.getItem('buzz_oauth_pending') === '1';
 
       let supabaseClient = window.supabase
         ? window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY)
         : null;
-      let supabaseUserId = localStorage.getItem('buzz_sb_uid') || '';
-      let githubProviderToken = localStorage.getItem('buzz_gh_token') || '';
-      let githubUserHandle = localStorage.getItem('buzz_gh_user') || '';
 
       function updateAuthBadge() {
+        const isSignedIn = Boolean(githubUserHandle || githubProviderToken || supabaseUserId);
+        const displayHandle = githubUserHandle || 'github-user';
+
+        // 1. Update Global Top-Right Bar (visible on every page including Front Page)
+        const globalSignInBtn = document.getElementById('global-signin-btn');
+        const globalUserPill = document.getElementById('global-user-pill');
+        const globalUserLabel = document.getElementById('global-user-label');
+        const globalUserAvatar = document.getElementById('global-user-avatar');
+
+        if (globalSignInBtn && globalUserPill) {
+          if (isSignedIn) {
+            globalSignInBtn.style.display = 'none';
+            globalUserPill.style.display = 'inline-flex';
+            if (globalUserLabel) {
+              globalUserLabel.textContent = '@' + displayHandle;
+            }
+            if (globalUserAvatar) {
+              if (githubAvatarUrl) {
+                globalUserAvatar.src = githubAvatarUrl;
+                globalUserAvatar.style.display = 'inline-block';
+              } else {
+                globalUserAvatar.style.display = 'none';
+              }
+            }
+          } else {
+            globalSignInBtn.style.display = 'inline-flex';
+            globalUserPill.style.display = 'none';
+          }
+        }
+
+        // 2. Update Step 2 Auth Button & Sign Out Button
         const dot = document.getElementById('github-auth-dot');
         const label = document.getElementById('github-auth-label');
         const signOutBtn = document.getElementById('github-signout-btn');
-        if (!dot || !label) return;
-        if (githubUserHandle || githubProviderToken || supabaseUserId) {
-          dot.className = 'led-dot';
-          label.textContent = 'GITHUB LOGGED IN: @' + (githubUserHandle || 'CONNECTED');
-          if (signOutBtn) signOutBtn.style.display = 'inline-flex';
-        } else {
-          dot.className = 'led-dot warn';
-          label.textContent = 'SIGN IN WITH GITHUB (SUPABASE AUTH)';
-          if (signOutBtn) signOutBtn.style.display = 'none';
+        if (dot && label) {
+          if (isSignedIn) {
+            dot.className = 'led-dot';
+            label.textContent = '✓ SIGNED IN AS @' + displayHandle + ' (GITHUB OAUTH ACTIVE)';
+            if (signOutBtn) signOutBtn.style.display = 'inline-flex';
+          } else {
+            dot.className = 'led-dot warn';
+            label.textContent = 'SIGN IN WITH GITHUB (SUPABASE AUTH)';
+            if (signOutBtn) signOutBtn.style.display = 'none';
+          }
         }
       }
 
@@ -1078,9 +1197,11 @@
         supabaseUserId = '';
         githubProviderToken = '';
         githubUserHandle = '';
+        githubAvatarUrl = '';
         localStorage.removeItem('buzz_sb_uid');
         localStorage.removeItem('buzz_gh_token');
         localStorage.removeItem('buzz_gh_user');
+        localStorage.removeItem('buzz_gh_avatar');
         sessionStorage.removeItem('buzz_oauth_pending');
       }
 
@@ -1105,11 +1226,43 @@
           githubUserHandle = handle;
           localStorage.setItem('buzz_gh_user', githubUserHandle);
         }
+        if (meta.avatar_url) {
+          githubAvatarUrl = meta.avatar_url;
+          localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
+        }
         updateAuthBadge();
         if (window.htmx) {
           htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
           htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
         }
+      }
+
+      async function verifyGitHubProfileFromToken() {
+        if (!githubProviderToken) return;
+        try {
+          const r = await fetch('https://api.github.com/user', {
+            headers: {
+              Accept: 'application/vnd.github+json',
+              Authorization: 'Bearer ' + githubProviderToken
+            }
+          });
+          if (r.ok) {
+            const profile = await r.json();
+            if (profile && profile.login) {
+              githubUserHandle = profile.login;
+              localStorage.setItem('buzz_gh_user', githubUserHandle);
+            }
+            if (profile && profile.avatar_url) {
+              githubAvatarUrl = profile.avatar_url;
+              localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
+            }
+            updateAuthBadge();
+            if (window.htmx) {
+              htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
+              htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
+            }
+          }
+        } catch (_) {}
       }
 
       document.body.addEventListener('htmx:configRequest', function (evt) {
@@ -1179,13 +1332,29 @@
       async function initSupabaseAuth() {
         updateAuthBadge();
         if (hadOAuthCallbackOnBoot) {
+          sessionStorage.removeItem('buzz_oauth_pending');
           window.buzzGoToStep(2);
+          if (window.location.hash && window.history && window.history.replaceState) {
+            window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+          }
+        }
+        if (githubProviderToken && !githubUserHandle) {
+          verifyGitHubProfileFromToken();
         }
         try {
           if (!supabaseClient && window.supabase) {
             supabaseClient = window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
           }
           if (supabaseClient) {
+            if (urlAccessToken && urlRefreshToken) {
+              try {
+                await supabaseClient.auth.setSession({
+                  access_token: urlAccessToken,
+                  refresh_token: urlRefreshToken
+                });
+              } catch (_) {}
+            }
+
             supabaseClient.auth.onAuthStateChange(function (event, session) {
               if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') && session) {
                 applySupabaseSession(session);

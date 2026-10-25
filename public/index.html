@@ -9,7 +9,8 @@
   <!-- HTMX for server-rendered HTML fragments from Rust Vercel Functions -->
   <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
   <!-- Supabase JS Client for GitHub OAuth -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-m/pGr8jJ48G4sZ9/G3nK8wH1iV+8a8u+P9u5W1D8y+9m+6+f+7+x+y+z" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug" crossorigin="anonymous"></script>
+  <script src="/assets/refactor.js" defer></script>
 </head>
 <body>
   <!-- Pixelated Rain Animation Canvas over the Dark-to-Dark-Blue Gradient Fade -->
@@ -150,6 +151,18 @@
             ⚡ ANALYZE REPO IN 1M CONTEXT
           </button>
         </form>
+
+        <button
+          id="refactor-open-btn"
+          type="button"
+          class="pixel-btn refactor-entry"
+          onclick="window.buzzOpenRefactor()"
+        >
+          AUTO-REFACTOR
+        </button>
+        <p class="refactor-entry-note">
+          Use this repository and your existing GitHub connection to review a small refactor before opening a draft PR.
+        </p>
 
         <!-- Persisted Repository Audits for the Logged-In User -->
         <div class="saved-audits-panel">
@@ -466,6 +479,100 @@
     </section>
 
     <!-- ================================================================== -->
+    <!-- WIZARD PAGE 5: REVIEW-FIRST AUTO-REFACTOR                          -->
+    <!-- ================================================================== -->
+    <section id="wizard-step-5" class="wizard-step wizard-step-wide" aria-labelledby="refactor-heading">
+      <div class="wizard-top-nav">
+        <button id="refactor-back-btn" type="button" class="pixel-btn pixel-btn-sm">BACK TO REPO</button>
+        <span class="step-badge">AUTO-REFACTOR // REVIEW FIRST</span>
+      </div>
+
+      <div class="pixel-box-gold refactor-panel">
+        <h2 id="refactor-heading" class="wizard-title" tabindex="-1">A SMALL CHANGE. YOUR REVIEW.</h2>
+        <p class="wizard-subtitle">
+          Select a narrow scope, provide Markdown rules, and review Gemini's suggestion. Nothing is published without your approval.
+        </p>
+        <div class="refactor-repo-row">
+          <div>
+            <span class="refactor-label">CURRENT REPOSITORY</span>
+            <strong id="refactor-repo" class="refactor-repo-label"></strong>
+          </div>
+          <button id="refactor-load-btn" type="button" class="pixel-btn pixel-btn-sm">LOAD FILE LIST</button>
+        </div>
+        <p id="refactor-base" class="refactor-help"></p>
+        <p class="refactor-help">Repository and login come from Buzz's existing repo picker. Go back to change either.</p>
+        <p id="refactor-status" class="refactor-status" role="status" aria-live="polite" aria-atomic="true"></p>
+
+        <fieldset id="refactor-settings" class="refactor-settings">
+          <label for="refactor-rules" class="refactor-label">MARKDOWN REFACTOR RULES</label>
+          <p id="refactor-rules-help" class="refactor-help">Repository rules, when available, load here for review. Edits stay in this page's memory only.</p>
+          <textarea id="refactor-rules" class="pixel-input refactor-textarea" rows="7" aria-describedby="refactor-rules-help" placeholder="Describe behavior to preserve, conventions to follow, and changes to avoid."></textarea>
+
+          <div class="refactor-scope">
+            <div>
+              <label for="refactor-max-files" class="refactor-label">MAX EDITABLE FILES (1–5)</label>
+              <input id="refactor-max-files" class="pixel-input" type="number" min="1" max="5" step="1" value="3" required />
+            </div>
+            <div>
+              <label for="refactor-max-lines" class="refactor-label">MAX CHANGED LINES (1–500)</label>
+              <input id="refactor-max-lines" class="pixel-input" type="number" min="1" max="500" step="1" value="100" required />
+            </div>
+          </div>
+
+          <p id="refactor-file-notice" class="refactor-help">Load the file list to select editable source files and optional read-only context.</p>
+          <div class="refactor-file-selectors">
+            <fieldset class="refactor-file-group">
+              <legend>EDITABLE SOURCE FILES</legend>
+              <p id="refactor-selected-count" class="refactor-help">0 selected</p>
+              <div id="refactor-files" class="refactor-file-list"></div>
+            </fieldset>
+            <fieldset class="refactor-file-group">
+              <legend>READ-ONLY CONTEXT (OPTIONAL)</legend>
+              <p id="refactor-context-count" class="refactor-help">0 / 3 selected; never edited</p>
+              <div id="refactor-context-files" class="refactor-file-list"></div>
+            </fieldset>
+          </div>
+
+          <label for="refactor-feedback" class="refactor-label">FEEDBACK FOR THE NEXT GENERATION (OPTIONAL)</label>
+          <textarea id="refactor-feedback" class="pixel-input refactor-textarea" rows="3" placeholder="Explain what to keep or improve when generating again."></textarea>
+          <label class="refactor-check">
+            <input id="refactor-consent" type="checkbox" />
+            <span>I consent to sending the selected source and read-only context, repository AGENTS.md guidance when present, rules, and feedback to Gemini. I have reviewed the selection for sensitive information.</span>
+          </label>
+          <div class="refactor-actions">
+            <button id="refactor-generate-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>GENERATE PROPOSAL</button>
+          </div>
+        </fieldset>
+      </div>
+
+      <section id="refactor-review" class="pixel-box refactor-review" aria-labelledby="refactor-review-heading" hidden>
+        <h2 id="refactor-review-heading" class="wizard-title" tabindex="-1">REVIEW THE PROPOSAL</h2>
+        <p class="refactor-warning">UNVERIFIED — tests have not run; draft PR only</p>
+        <p id="refactor-proposal-base" class="refactor-help"></p>
+        <dl class="refactor-summary">
+          <dt>SUMMARY</dt><dd id="refactor-summary"></dd>
+          <dt>RULE FOLLOWED</dt><dd id="refactor-rule"></dd>
+          <dt>TRADEOFFS</dt><dd id="refactor-tradeoffs"></dd>
+        </dl>
+        <p id="refactor-no-changes" class="refactor-help" hidden>No worthwhile change was proposed. No draft PR can be opened.</p>
+        <p id="refactor-changed-lines" class="refactor-count" aria-live="polite"></p>
+        <div id="refactor-edits"></div>
+        <div class="refactor-actions">
+          <button id="refactor-regenerate-btn" type="button" class="pixel-btn">REGENERATE WITH FEEDBACK</button>
+          <button id="refactor-reject-btn" type="button" class="pixel-btn">REJECT / RESET PROPOSAL</button>
+        </div>
+        <div id="refactor-publish-controls" hidden>
+          <label class="refactor-check">
+            <input id="refactor-approve" type="checkbox" />
+            <span>I reviewed every replacement and approve opening an unverified draft PR. Tests have not run. Editing code clears this approval.</span>
+          </label>
+          <button id="refactor-publish-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>OPEN DRAFT PR</button>
+        </div>
+        <div id="refactor-published" class="refactor-published" hidden></div>
+      </section>
+    </section>
+
+    <!-- ================================================================== -->
     <!-- OVERLAY: PIXEL LIGHTNING BOLT BOUNCING & CODING ON A LAPTOP        -->
     <!-- ================================================================== -->
     <div id="patch-coding-overlay" class="patch-coding-overlay" aria-live="polite">
@@ -696,9 +803,9 @@
       window.addEventListener('resize', resizeRain);
       setInterval(stepRain, 55);
 
-      // 2. 4-Step Wizard Navigation Controller
+      // 2. Wizard Navigation Controller (auditing and review-first refactoring)
       window.buzzGoToStep = function (stepNumber) {
-        [1, 2, 3, 4].forEach(function (n) {
+        [1, 2, 3, 4, 5].forEach(function (n) {
           const el = document.getElementById('wizard-step-' + n);
           if (el) {
             if (n === stepNumber) {
@@ -709,6 +816,7 @@
           }
         });
         window.scrollTo({ top: 0, behavior: 'instant' });
+        window.dispatchEvent(new CustomEvent('buzz:step-change', { detail: { step: stepNumber } }));
       };
 
       // 3. Exact Repository File Filter (matches src/lib.rs is_auditable_source_path)
@@ -1034,6 +1142,7 @@
         const form = document.getElementById('analyze-form');
         if (input && repoFullName) {
           input.value = repoFullName;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
         }
         if (form && window.htmx) {
           htmx.trigger(form, 'submit');
@@ -1047,6 +1156,8 @@
       let githubUserHandle = sessionStorage.getItem('buzz_gh_user') || '';
 
       function updateAuthBadge() {
+        // Consumers reuse this auth session; never put credentials in event details.
+        window.dispatchEvent(new CustomEvent('buzz:auth-change'));
         const dot = document.getElementById('github-auth-dot');
         const label = document.getElementById('github-auth-label');
         const signOutBtn = document.getElementById('github-signout-btn');
@@ -1225,11 +1336,7 @@
       };
 
       window.buzzSignOutGitHub = async function () {
-        if (supabaseClient) {
-          try {
-            await supabaseClient.auth.signOut();
-          } catch (_) {}
-        }
+        // Clear local review/source state immediately, even if remote sign-out is slow.
         supabaseUserId = '';
         githubProviderToken = '';
         githubUserHandle = '';
@@ -1237,6 +1344,11 @@
         sessionStorage.removeItem('buzz_gh_token');
         sessionStorage.removeItem('buzz_gh_user');
         updateAuthBadge();
+        if (supabaseClient) {
+          try {
+            await supabaseClient.auth.signOut();
+          } catch (_) {}
+        }
         if (window.htmx) {
           htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
           htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
@@ -1247,6 +1359,7 @@
         const input = document.getElementById('repo-input');
         if (input) {
           input.value = repoFullName;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
           input.focus();
         }
       };

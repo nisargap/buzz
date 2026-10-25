@@ -48,3 +48,81 @@ cargo test
 # Run with Vercel CLI
 vercel dev
 ```
+
+## Auto-Refactor in the existing web app
+
+Sign in with the existing **Connect GitHub** button, choose a repo in the existing picker, then click **Auto-Refactor**. The new panel loads files from that repo, optionally loads `.refactor/RULES.md`, and lets you edit the Markdown guidance, select source/read-only context files, and set file/changed-line limits. No additional login or repository setup is required.
+
+Generate a proposal, inspect the original and proposed code, edit the proposed contents or regenerate with feedback, then explicitly approve **Open Draft PR**. The server revalidates file scope, patch limits, and the pinned base revision. Draft PRs contain the reviewed code, not a second model-generated rewrite. Only the connected user's GitHub token is used; a username-only login or a token without write access cannot publish. There is no server PAT fallback and no automatic merge.
+
+Web proposals are labeled **UNVERIFIED**: Vercel does not execute arbitrary repository builds/tests. Use the repository's normal CI and review before merging a draft. The web flow does not yet ingest CI results or run a hosted sandbox. Read-only context and selected source are sent to Gemini only after consent; path filtering is not a complete secret scanner. Repo rules containing CLI JSON remain guidance in the web editor; the explicit web scope controls are authoritative for web runs.
+
+The `/api/refactor` endpoint uses the existing `GEMINI_API_KEY`/`GEMINI_MODEL` configuration. Optional `REFACTOR_SIGNING_SECRET` provides a dedicated signing key; otherwise the Gemini key signs short-lived review scopes using HMAC-SHA256. Review tokens are bound to the connected GitHub token, base commit, and file scope and expire after 30 minutes. Changing GitHub sessions or the base branch requires a fresh proposal. Unsupported/oversized files are excluded; truncated repository trees are surfaced rather than presented as complete.
+
+The [saved feature plan](docs/refactoring-agent-plan.md) describes the web feature and optional local execution layer.
+
+## Optional Markdown-driven refactoring CLI
+
+The standalone runner uses Python 3.10+ and Git, with no Python dependencies. It supports local repositories and pre-review command execution independently of the web UI; it is not required for customers using Buzz's web flow.
+
+### 1. Set up customer rules
+
+```bash
+python3 scripts/auto_refactor.py init --repo /path/to/repo --include src/
+python3 scripts/auto_refactor.py inspect --repo /path/to/repo
+```
+
+`init` creates `.refactor/RULES.md` without overwriting existing rules. Edit its Markdown guidance to express what simpler code means to your team. Its single fenced JSON policy block configures exact files or directory prefixes (ending in `/`), exclusions, file/line limits, and approved checks. It does not interpret prose as permission to execute commands.
+
+For example, replace the generated `checks` list with your repository's actual commands:
+
+```json
+"checks": [
+  {"name": "tests", "argv": ["python3", "-m", "unittest", "discover", "-s", "tests"], "cwd": ".", "timeout_seconds": 120}
+]
+```
+
+Commands are argument arrays, not implicit shell strings. For a monorepo, set each command's `cwd` to its module directory. Inspect prints the effective scope candidates and check commands; it does not install or run tools. A Markdown rule can prefer an idiom without imposing a numeric complexity target.
+
+### 2. Propose one refactor
+
+```bash
+export GEMINI_API_KEY='your-key'
+# Optional: export GEMINI_MODEL='your-available-model'
+python3 scripts/auto_refactor.py run --repo /path/to/repo \
+  --file src/example.py --context tests/test_example.py \
+  --feedback 'Keep validation inline; reuse existing helpers.' \
+  --allow-source-upload --approve-checks
+```
+
+The default model is `gemini-4-argon`, matching Buzz; set `GEMINI_MODEL` to a model available to your API key. The provider uses Google's `generateContent` endpoint. No model fallback is silently substituted.
+
+Select files explicitly; `--context` adds read-only callers, types, or tests. Nearby tracked manifests and `AGENTS.md` instructions are included automatically. The context comes from **committed HEAD**, not uncommitted source edits. `--allow-source-upload` explicitly permits sending this context, rules, and feedback to Gemini. The script does not load `.env` files. Review source before upload; path-based secret exclusions cannot detect every secret embedded in code.
+
+The runner creates a sibling `<repo>-refactor-<id>` worktree on `refactor/<id>`, runs baseline checks, applies the candidate there, enforces patch limits, and runs the same checks again. Your original source and staged/unstaged edits stay untouched. Records are saved under `.refactor/runs/<id>/` (add this directory to the target repo's ignore rules; it can contain private code and check output).
+
+**Execution boundary:** `--approve-checks` authorizes those commands to execute project code. A worktree isolates edits, **not processes or filesystem access**. Only use this local prototype with trusted code/commands, or run it inside an externally provisioned container/VM for customer/untrusted repositories. The runner strips inherited credentials and uses a temporary home directory, which may require dependencies/toolchains to be provisioned separately. It does not provide a production sandbox or network isolation.
+
+### 3. Review, edit, and recheck
+
+```bash
+python3 scripts/auto_refactor.py review --repo /path/to/repo RUN_ID
+# Edit the selected source files in the reported sibling worktree, then:
+python3 scripts/auto_refactor.py check --repo /path/to/repo RUN_ID --approve-checks
+python3 scripts/auto_refactor.py review --repo /path/to/repo RUN_ID --decision approve
+# Or: --decision reject
+```
+
+Approval records a decision for the exact checked patch; it **never commits, pushes, merges, or deploys**. Use normal code review, branch protections, and release checks afterwards. Missing commands, failed baseline/candidate checks, stale policy, and out-of-scope changes block approval. Check results are evidence, not proof of behavioral equivalence. Human review still needs to assess semantics and test coverage. Failed/rejected worktrees remain available for inspection; cleanup is manual so customer edits are never discarded automatically.
+
+Use another `run --feedback '...'` to request a different proposal from the original revision. Feedback is per attempt; edit `RULES.md` yourself to persist it. Changes to policy require a new run. This MVP only replaces selected existing text files; it does not create/delete source files, alter file modes, edit known test/configuration paths, or automatically expand scope. Tests embedded inside source still require human review. If a change needs new tests or a larger migration, stop and hand it off rather than weakening existing checks.
+
+### Offline proposals and tests
+
+For an existing agent or deterministic evaluation, pass `--proposal /path/to/proposal.json` instead of enabling source upload. The schema is a JSON object with `summary`, `rule`, `tradeoffs`, and `edits`; every edit contains `path`, the SHA-256 `before_sha256` of the committed file bytes, and its complete replacement `content`. An empty edits list means no worthwhile change. Offline proposals go through the same scope and validation gates.
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The suite exercises the same runner against disposable Python and JavaScript Git fixtures (the JavaScript fixture requires Node), including failed checks, protected paths, patch limits, feedback, policy changes, and manual-edit rechecks. Provider calls are mocked; tests do not upload repository code. Exit codes: `0` for successful commands/review-ready or no-change runs, `1` for input/setup errors, and `2` for blocked, failing, or unverified runs.

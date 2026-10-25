@@ -1128,3 +1128,299 @@ body::before {
   align-items: center;
   gap: 6px;
 }
+
+/* ==========================================================================
+   AUTO-REFACTOR: SCOPED PROPOSAL & EXPLICIT DRAFT PR REVIEW
+   ========================================================================== */
+
+.refactor-entry {
+  width: 100%;
+  margin-top: 18px;
+  border-color: var(--buzz-cyan);
+  color: var(--buzz-cyan);
+}
+
+.refactor-entry-note {
+  margin-top: 10px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+#wizard-step-5 {
+  max-width: 1120px;
+  gap: 20px;
+}
+
+#wizard-step-5 [hidden] {
+  display: none !important;
+}
+
+#wizard-step-5 .wizard-top-nav {
+  margin-bottom: 0;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.refactor-panel,
+.refactor-review {
+  min-width: 0;
+}
+
+.refactor-repo-row,
+.refactor-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.refactor-repo-row {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.refactor-repo-row > div {
+  min-width: 0;
+}
+
+.refactor-repo-label {
+  display: block;
+  font-family: var(--font-code);
+  color: var(--buzz-cyan);
+  overflow-wrap: anywhere;
+}
+
+.refactor-help,
+.refactor-status,
+.refactor-check,
+.refactor-summary {
+  font-family: var(--font-code);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.refactor-help {
+  color: var(--text-muted);
+  margin: 7px 0 12px;
+}
+
+.refactor-status {
+  min-height: 1.6em;
+  color: var(--buzz-cyan);
+  margin: 12px 0;
+}
+
+.refactor-status.is-error,
+.refactor-count.is-error {
+  color: var(--sev-critical);
+}
+
+.refactor-settings {
+  min-width: 0;
+  border: 0;
+}
+
+.refactor-label {
+  display: block;
+  color: var(--buzz-yellow);
+  font-size: 0.82rem;
+  margin-bottom: 7px;
+}
+
+.refactor-textarea {
+  display: block;
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.6;
+  font-size: 0.84rem;
+  margin-bottom: 18px;
+}
+
+.refactor-scope,
+.refactor-file-selectors,
+.refactor-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.refactor-scope .pixel-input {
+  max-width: 180px;
+}
+
+.refactor-file-group {
+  min-width: 0;
+  border: 2px solid var(--border-blue);
+  padding: 12px;
+}
+
+.refactor-file-group legend {
+  padding: 0 6px;
+  color: var(--buzz-cyan);
+  font-size: 0.8rem;
+}
+
+.refactor-file-list {
+  max-height: 250px;
+  overflow: auto;
+  background: var(--terminal-bg);
+}
+
+.refactor-file-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px;
+  border-bottom: 1px solid var(--border-blue);
+  font-family: var(--font-code);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.refactor-file-choice span {
+  min-width: 0;
+}
+
+.refactor-file-size {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.refactor-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 16px 0;
+  cursor: pointer;
+}
+
+#wizard-step-5 input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  accent-color: var(--buzz-yellow);
+}
+
+#wizard-step-5 :is(button, input, textarea):disabled,
+.refactor-entry:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+#wizard-step-5 :is(button, a, input, textarea):focus-visible,
+.refactor-entry:focus-visible {
+  outline: 3px solid var(--buzz-cyan);
+  outline-offset: 3px;
+}
+
+.refactor-warning {
+  padding: 12px 14px;
+  margin: 16px 0;
+  background: var(--terminal-bg);
+  border: 2px solid var(--buzz-amber);
+  color: var(--buzz-yellow);
+  font-family: var(--font-code);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.refactor-summary dt {
+  color: var(--buzz-cyan);
+  font-weight: 600;
+  margin-top: 12px;
+}
+
+.refactor-summary dd {
+  white-space: pre-wrap;
+}
+
+.refactor-count {
+  color: var(--buzz-yellow);
+  font-family: var(--font-code);
+  font-size: 0.84rem;
+  margin: 16px 0;
+}
+
+.refactor-edit-card {
+  min-width: 0;
+  margin: 20px 0;
+  padding-top: 16px;
+  border-top: 3px dashed var(--border-blue);
+}
+
+.refactor-file-title {
+  color: var(--buzz-cyan);
+  font-family: var(--font-code);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+  margin-bottom: 12px;
+}
+
+.refactor-diff > div {
+  min-width: 0;
+}
+
+.refactor-code {
+  width: 100%;
+  height: 320px;
+  overflow: auto;
+  white-space: pre;
+  tab-size: 2;
+  background: var(--terminal-bg);
+  color: var(--text-main);
+  border: 2px solid var(--border-blue);
+  padding: 12px;
+  font-family: var(--font-code);
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+
+textarea.refactor-code {
+  display: block;
+  resize: vertical;
+  border-color: var(--buzz-cyan);
+}
+
+.refactor-published {
+  border-left: 4px solid var(--buzz-green);
+  padding: 12px;
+  margin-top: 18px;
+}
+
+.refactor-published a {
+  color: var(--buzz-cyan);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px) {
+  #wizard-step-5 .pixel-box,
+  #wizard-step-5 .pixel-box-gold {
+    padding: 18px 14px;
+  }
+
+  .refactor-file-selectors,
+  .refactor-diff {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #wizard-step-5 .pixel-btn {
+    font-size: 0.65rem;
+    padding: 12px;
+    line-height: 1.6;
+  }
+
+  .refactor-code {
+    height: 250px;
+  }
+}
+
+@media (max-width: 400px) {
+  .refactor-scope {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

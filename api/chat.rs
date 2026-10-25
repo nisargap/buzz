@@ -1,4 +1,4 @@
-use buzz::{run_buzz_codebase_chat, templates, AppConfig};
+use buzz::{run_buzz_codebase_chat_html, AppConfig};
 use reqwest::Client;
 use std::collections::HashMap;
 use url::form_urlencoded;
@@ -21,7 +21,7 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
         .filter(|s| !s.is_empty());
 
     let (scan_id, repo, report_context, question) = parse_chat_body(req.body());
-    let answer = run_buzz_codebase_chat(
+    let html = run_buzz_codebase_chat_html(
         &client,
         &config,
         &repo,
@@ -35,8 +35,6 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
         gh_token.as_deref(),
     )
     .await;
-
-    let html = templates::render_chat_turn(&question, &answer);
 
     Ok(Response::builder()
         .status(StatusCode::OK)

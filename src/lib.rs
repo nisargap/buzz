@@ -1588,10 +1588,21 @@ pub async fn save_diagram_to_scan(
 }
 
 // ============================================================================
-// 5C. TALK TO BUZZ — CODEBASE & AUDIT REPORT Q&A ASSISTANT
+// 5C. TALK TO BUZZ — CODEBASE & AUDIT REPORT Q&A + AGENT ACTIONS
 // ============================================================================
 
-pub async fn run_buzz_codebase_chat(
+#[derive(Deserialize)]
+struct GeminiChatJsonOutput {
+    reply: String,
+    #[serde(default)]
+    ask_confirm_reaudit: bool,
+    #[serde(default)]
+    suggest_pr_cve_ids: Vec<String>,
+    #[serde(default)]
+    execute_pr_now_cve_id: Option<String>,
+}
+
+pub async fn run_buzz_codebase_chat_html(
     client: &Client,
     config: &AppConfig,
     repo_full_name: &str,
@@ -1603,42 +1614,126 @@ pub async fn run_buzz_codebase_chat(
     let clean_repo = repo_full_name.trim();
     let trimmed_q = question.trim();
     if trimmed_q.is_empty() {
-        return "Ask me any question about this repository's vulnerabilities, architecture, or how to remediate specific findings.".to_string();
+        return templates::render_chat_turn(
+            question,
+            "Ask me any question about this repository's vulnerabilities, architecture, or tell me to create a Pull Request for any finding!",
+            "",
+        );
     }
 
-    // 1. Gather persisted AuditReport from Supabase if scan_id is present
-    let mut full_report_json = report_context.to_string();
+    // 1. Load the existing AuditReport from Supabase or from the client's report_context
+    //    (NEVER silently re-audit the repository during chat!)
+    let mut loaded_report: Option<AuditReport> = None;
     if let Some(sid) = scan_id.filter(|s| !s.trim().is_empty()) {
-        if let Some(saved) = fetch_saved_scan_by_id(client, config, sid).await {
-            if let Ok(serialized) = serde_json::to_string_pretty(&saved) {
-                full_report_json = serialized;
-            }
+        loaded_report = fetch_saved_scan_by_id(client, config, sid).await;
+    }
+    if loaded_report.is_none() && !report_context.trim().is_empty() {
+        if let Ok(parsed_val) = serde_json::from_str::<serde_json::Value>(report_context) {
+            let findings: Vec<VulnerabilityFinding> = parsed_val
+                .get("findings")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let branch = parsed_val
+                .get("default_branch")
+                .and_then(|v| v.as_str())
+                .unwrap_or("main")
+                .to_string();
+            let summary = parsed_val
+                .get("executive_summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let grade = parsed_val
+                .get("grade")
+                .and_then(|v| v.as_str())
+                .unwrap_or("A")
+                .to_string();
+            let risk = parsed_val
+                .get("risk_score")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let paths: Vec<String> = parsed_val
+                .get("inspected_file_paths")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let diagram: Option<CodebaseDiagram> = parsed_val
+                .get("diagram")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            loaded_report = Some(AuditReport {
+                scan_id: scan_id.map(|s| s.to_string()),
+                repo_full_name: clean_repo.to_string(),
+                default_branch: branch,
+                commit_sha: "HEAD".to_string(),
+                model_used: config.gemini_model.clone(),
+                risk_score: risk,
+                grade,
+                executive_summary: summary,
+                files_inspected: paths.len(),
+                total_tree_files: paths.len(),
+                total_bytes_loaded: 0,
+                estimated_tokens: 0,
+                raw_tokens_before_compact: 0,
+                auto_compacted: false,
+                compaction_saved_tokens: 0,
+                inspected_file_paths: paths,
+                cves_checked: 1220,
+                source_origin: "Cached Audit Context".to_string(),
+                findings,
+                diagram,
+            });
         }
     }
 
-    // 2. Fetch repository files snapshot for deep code-level context
-    let snapshot = fetch_repo_snapshot(client, config, clean_repo, github_token).await;
-    let mut repo_files_context = String::new();
-    for f in snapshot.files.iter().take(30) {
-        let snippet: String = f.content.chars().take(6000).collect();
-        repo_files_context.push_str(&format!("\n--- FILE: {} ---\n{}\n", f.path, snippet));
-    }
+    let report_json_for_prompt = if let Some(rep) = &loaded_report {
+        serde_json::to_string_pretty(rep).unwrap_or_else(|_| report_context.to_string())
+    } else {
+        report_context.to_string()
+    };
 
-    // 3. Call Gemini 4 Argon with the full Audit Report + Repository Codebase Context
+    let q_lower = trimmed_q.to_ascii_lowercase();
+    let user_asked_reaudit = q_lower.contains("re-audit")
+        || q_lower.contains("reaudit")
+        || q_lower.contains("rescan")
+        || q_lower.contains("re-scan")
+        || q_lower.contains("audit again")
+        || q_lower.contains("scan again");
+
+    let user_explicitly_requested_pr = (q_lower.contains("create a pr")
+        || q_lower.contains("open a pr")
+        || q_lower.contains("put up a pr")
+        || q_lower.contains("make a pr")
+        || q_lower.contains("create pr")
+        || q_lower.contains("open pr")
+        || q_lower.contains("create pull request")
+        || q_lower.contains("open pull request")
+        || q_lower.contains("apply patch"))
+        && !q_lower.contains("can you")
+        && !q_lower.contains("how do");
+
+    // 2. Call Gemini 4 Argon for structured chat response + action proposals
+    let mut reply_text = String::new();
+    let mut ask_confirm_reaudit = user_asked_reaudit;
+    let mut suggest_pr_cve_ids: Vec<String> = Vec::new();
+    let mut execute_pr_now_cve_id: Option<String> = None;
+
     if let Some(api_key) = &config.gemini_api_key {
         let prompt = format!(
-            "You are Buzz, an expert security auditor and software architect assistant powered by Gemini 4 Argon.\n\
-             You are chatting with a developer about their GitHub repository `{repo}`.\n\
-             You have complete access to:\n\
-             1. The Buzz Vulnerability Audit Report & System Design Diagram for `{repo}`.\n\
-             2. The actual source code files from `{repo}`.\n\n\
-             Answer the user's question clearly, concisely, and directly. Reference exact file paths, line numbers, CVE/CWE IDs, and concrete code fixes where relevant.\n\n\
-             === AUDIT REPORT CONTEXT ({repo}) ===\n{report_ctx}\n\n\
-             === REPOSITORY SOURCE FILES ({repo}) ===\n{files_ctx}\n\n\
-             === USER QUESTION ===\n{q}",
+            "You are Buzz, an interactive security auditor and codebase assistant powered by Gemini 4 Argon.\n\
+             You are chatting with a developer about their GitHub repository `{repo}` using the existing Audit Report context below.\n\n\
+             IMPORTANT BEHAVIOR RULES:\n\
+             1. NEVER re-audit automatically. If the user asks to re-audit, rescan, or check new commits, set `\"ask_confirm_reaudit\": true` and politely ask them in `\"reply\"` to confirm running a re-audit using the confirmation button below.\n\
+             2. You can suggest creating GitHub Pull Requests for findings in the report! Whenever you discuss specific vulnerabilities or fixes, list their `cve_id`s in `\"suggest_pr_cve_ids\"` so the UI displays 1-click Create PR buttons.\n\
+             3. If the user explicitly commands you to create/open/put up a PR right now (e.g. 'Create a PR for CWE-284' or 'Open a PR for the top vulnerability'), set `\"execute_pr_now_cve_id\"` to that finding's `cve_id` (and explain in `\"reply\"` that you are opening the Pull Request now).\n\n\
+             Return strictly valid JSON matching this schema:\n\
+             {{\"reply\": \"Clear, helpful answer referencing exact files, lines, and CVEs\", \
+             \"ask_confirm_reaudit\": false, \
+             \"suggest_pr_cve_ids\": [\"CVE-or-CWE-ID\"], \
+             \"execute_pr_now_cve_id\": null}}\n\n\
+             === EXISTING AUDIT REPORT CONTEXT ({repo}) ===\n{report_ctx}\n\n\
+             === USER MESSAGE ===\n{q}",
             repo = clean_repo,
-            report_ctx = full_report_json,
-            files_ctx = repo_files_context,
+            report_ctx = report_json_for_prompt,
             q = trimmed_q
         );
 
@@ -1651,7 +1746,10 @@ pub async fn run_buzz_codebase_chat(
 
         let payload = serde_json::json!({
             "contents": [{ "parts": [{ "text": prompt }] }],
-            "generationConfig": { "temperature": 0.2 }
+            "generationConfig": {
+                "temperature": 0.2,
+                "responseMimeType": "application/json"
+            }
         });
 
         for model_id in candidate_models {
@@ -1670,13 +1768,21 @@ pub async fn run_buzz_codebase_chat(
             {
                 if resp.status().is_success() {
                     if let Ok(body) = resp.json::<serde_json::Value>().await {
-                        if let Some(text) = body
+                        if let Some(raw_text) = body
                             .pointer("/candidates/0/content/parts/0/text")
                             .and_then(|v| v.as_str())
                         {
-                            let cleaned = text.trim();
-                            if !cleaned.is_empty() {
-                                return cleaned.to_string();
+                            let cleaned = strip_markdown_fences(raw_text);
+                            if let Ok(parsed) = serde_json::from_str::<GeminiChatJsonOutput>(cleaned)
+                            {
+                                reply_text = parsed.reply;
+                                ask_confirm_reaudit =
+                                    ask_confirm_reaudit || parsed.ask_confirm_reaudit;
+                                suggest_pr_cve_ids = parsed.suggest_pr_cve_ids;
+                                execute_pr_now_cve_id = parsed.execute_pr_now_cve_id.filter(|s| {
+                                    !s.trim().is_empty() && s.trim() != "null"
+                                });
+                                break;
                             }
                         }
                     }
@@ -1685,24 +1791,232 @@ pub async fn run_buzz_codebase_chat(
         }
     }
 
-    // 4. Context-aware fallback response using the loaded snapshot & report context
-    let file_list: Vec<&str> = snapshot
-        .files
-        .iter()
-        .take(8)
-        .map(|f| f.path.as_str())
-        .collect();
-    format!(
-        "Based on the audit report for `{}` ({} files loaded in 1M context, including `{}`):\n\n{}\n\nYou can apply any remediation patch directly using the `⚡ APPLY & OPEN PR` button on the Vulnerabilities tab.",
-        clean_repo,
-        snapshot.files.len(),
-        file_list.join("`, `"),
-        if !report_context.trim().is_empty() {
-            report_context.chars().take(600).collect::<String>()
+    // Fallback reply & intent detection if Gemini JSON was not returned
+    if reply_text.trim().is_empty() {
+        if ask_confirm_reaudit {
+            reply_text = format!(
+                "I haven't run a re-audit yet—re-auditing will fetch the latest commits from `{}` and load the full repository tree into the 1M context window. Would you like me to start a fresh re-audit now?",
+                clean_repo
+            );
+        } else if let Some(rep) = &loaded_report {
+            reply_text = format!(
+                "{}\n\nI can also open a Pull Request for any of the {} findings in `{}`—click a Create PR action below or tell me which CVE/CWE to patch!",
+                rep.executive_summary,
+                rep.findings.len(),
+                clean_repo
+            );
+            for f in rep.findings.iter().filter(|f| !f.patch_created).take(2) {
+                suggest_pr_cve_ids.push(f.cve_id.clone());
+            }
         } else {
-            format!("Primary ecosystem: `{}` on branch `{}`.", snapshot.primary_ecosystem, snapshot.default_branch)
+            reply_text = format!(
+                "I have the report context for `{}` ready. Let me know which vulnerability or file you'd like to inspect or patch!",
+                clean_repo
+            );
         }
-    )
+    }
+
+    // If user explicitly asked to execute a PR in chat and Gemini didn't pick a specific ID yet, match from findings
+    if execute_pr_now_cve_id.is_none() && user_explicitly_requested_pr {
+        if let Some(rep) = &loaded_report {
+            if let Some(matched) = rep
+                .findings
+                .iter()
+                .find(|f| q_lower.contains(&f.cve_id.to_ascii_lowercase()))
+                .or_else(|| rep.findings.iter().find(|f| !f.patch_created))
+                .or_else(|| rep.findings.first())
+            {
+                execute_pr_now_cve_id = Some(matched.cve_id.clone());
+            }
+        }
+    }
+
+    // If discussing vulnerabilities and suggest_pr_cve_ids is empty, suggest up to 2 unpatched findings mentioned in reply
+    if suggest_pr_cve_ids.is_empty() && execute_pr_now_cve_id.is_none() {
+        if let Some(rep) = &loaded_report {
+            for f in &rep.findings {
+                if !f.patch_created
+                    && (reply_text.contains(&f.cve_id) || reply_text.contains(&f.file_path))
+                {
+                    suggest_pr_cve_ids.push(f.cve_id.clone());
+                }
+            }
+            if suggest_pr_cve_ids.is_empty()
+                && (q_lower.contains("pr")
+                    || q_lower.contains("fix")
+                    || q_lower.contains("patch")
+                    || q_lower.contains("vulnerab"))
+            {
+                for f in rep.findings.iter().filter(|f| !f.patch_created).take(2) {
+                    suggest_pr_cve_ids.push(f.cve_id.clone());
+                }
+            }
+        }
+    }
+
+    // 3. Build interactive action cards HTML (Re-Audit confirmation, Executed PR result, or Suggested PR buttons)
+    let mut actions_html = String::new();
+
+    // Action A: Ask confirmation before re-auditing
+    if ask_confirm_reaudit {
+        actions_html.push_str(&format!(
+            r#"<div class="chat-action-box" style="margin-top:12px;padding:12px;background:#070d20;border:2px solid var(--buzz-yellow);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                <span style="font-size:0.82rem;color:var(--buzz-yellow);">
+                    ⚠ Confirm before running a fresh 1M-context re-audit of <strong>{repo}</strong>:
+                </span>
+                <button
+                    type="button"
+                    class="pixel-btn pixel-btn-sm"
+                    style="background:var(--buzz-yellow);color:#090d1c;font-weight:700;"
+                    onclick="window.buzzReauditRepo('{repo}')"
+                >
+                    ↻ CONFIRM &amp; RE-AUDIT {repo}
+                </button>
+            </div>"#,
+            repo = templates::escape_html(clean_repo)
+        ));
+    }
+
+    // Action B: Execute Create PR directly if requested by the user
+    if let (Some(exec_cve), Some(rep)) = (&execute_pr_now_cve_id, &loaded_report) {
+        if let Some(finding) = rep
+            .findings
+            .iter()
+            .find(|f| f.cve_id.eq_ignore_ascii_case(exec_cve))
+            .or_else(|| rep.findings.first())
+        {
+            let patch_token = compute_patch_signature(
+                config,
+                &rep.repo_full_name,
+                &rep.default_branch,
+                &finding.file_path,
+                &finding.cve_id,
+            )
+            .unwrap_or_default();
+
+            let patch_req = PatchRequest {
+                finding_id: finding.id.clone().unwrap_or_default(),
+                repo: rep.repo_full_name.clone(),
+                branch: rep.default_branch.clone(),
+                cve_id: finding.cve_id.clone(),
+                title: finding.title.clone(),
+                file_path: finding.file_path.clone(),
+                line_reference: finding.line_reference.clone(),
+                remediation_patch: finding.remediation_patch.clone(),
+                patch_token,
+            };
+
+            let outcome =
+                create_remediation_pull_request(client, config, &patch_req, github_token).await;
+            let outcome_html = templates::render_pr_outcome(&outcome);
+            actions_html.push_str(&format!(
+                r#"<div class="chat-action-box" style="margin-top:12px;padding:12px;background:#061512;border:2px solid var(--buzz-green);">
+                    <div style="font-family:var(--font-display);font-size:0.62rem;color:var(--buzz-green);margin-bottom:8px;">
+                        ⚡ EXECUTED PR ACTION FOR {cve} ({file})
+                    </div>
+                    {outcome_html}
+                </div>"#,
+                cve = templates::escape_html(&finding.cve_id),
+                file = templates::escape_html(&finding.file_path),
+                outcome_html = outcome_html
+            ));
+        }
+    } else if let Some(rep) = &loaded_report {
+        // Action C: Render Suggested 1-Click Create PR Cards inside the chat response
+        let mut suggested_cards = String::new();
+        for (s_idx, cve_id) in suggest_pr_cve_ids.iter().take(3).enumerate() {
+            if let Some(f) = rep
+                .findings
+                .iter()
+                .find(|f| f.cve_id.eq_ignore_ascii_case(cve_id))
+            {
+                let finding_id = templates::escape_html(f.id.as_deref().unwrap_or(""));
+                let patch_token = compute_patch_signature(
+                    config,
+                    &rep.repo_full_name,
+                    &rep.default_branch,
+                    &f.file_path,
+                    &f.cve_id,
+                )
+                .unwrap_or_default();
+                let unique_slot = format!(
+                    "chat-pr-slot-{}-{}",
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_millis() % 100_000)
+                        .unwrap_or(1),
+                    s_idx
+                );
+
+                let action_inner = if f.patch_created {
+                    let url = templates::escape_html(f.pr_url.as_deref().unwrap_or("#"));
+                    let num = f.pr_number.unwrap_or(1);
+                    format!(
+                        r#"<a href="{url}" target="_blank" rel="noopener noreferrer" class="pixel-btn pixel-btn-pr-link">↗ VIEW EXISTING PR #{num}</a>"#,
+                        url = url,
+                        num = num
+                    )
+                } else {
+                    format!(
+                        r#"<form style="margin:0;display:inline-block;">
+                            <input type="hidden" name="finding_id" value="{finding_id}" />
+                            <input type="hidden" name="repo" value="{repo}" />
+                            <input type="hidden" name="branch" value="{branch}" />
+                            <input type="hidden" name="cve_id" value="{cve}" />
+                            <input type="hidden" name="title" value="{title}" />
+                            <input type="hidden" name="file_path" value="{file}" />
+                            <input type="hidden" name="line_reference" value="{line}" />
+                            <input type="hidden" name="remediation_patch" value="{patch}" />
+                            <input type="hidden" name="patch_token" value="{patch_token}" />
+                            <button type="button" class="pixel-btn pixel-btn-apply" onclick="return window.buzzApplyPatch(this, event);">
+                                ⚡ CREATE PR FOR {cve}
+                            </button>
+                        </form>"#,
+                        finding_id = finding_id,
+                        repo = templates::escape_html(&rep.repo_full_name),
+                        branch = templates::escape_html(&rep.default_branch),
+                        cve = templates::escape_html(&f.cve_id),
+                        title = templates::escape_html(&f.title),
+                        file = templates::escape_html(&f.file_path),
+                        line = templates::escape_html(&f.line_reference),
+                        patch = templates::escape_html(&f.remediation_patch),
+                        patch_token = templates::escape_html(&patch_token)
+                    )
+                };
+
+                suggested_cards.push_str(&format!(
+                    r#"<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:10px 12px;background:#070d20;border:2px solid var(--border-blue);">
+                        <div style="font-size:0.82rem;">
+                            <strong style="color:var(--buzz-yellow);">{cve}</strong>
+                            <span style="color:var(--text-muted);"> in `{file}` ({line})</span>
+                        </div>
+                        <div id="{slot}">
+                            {action_inner}
+                        </div>
+                    </div>"#,
+                    cve = templates::escape_html(&f.cve_id),
+                    file = templates::escape_html(&f.file_path),
+                    line = templates::escape_html(&f.line_reference),
+                    slot = unique_slot,
+                    action_inner = action_inner
+                ));
+            }
+        }
+
+        if !suggested_cards.is_empty() {
+            actions_html.push_str(&format!(
+                r#"<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+                    <div style="font-family:var(--font-display);font-size:0.6rem;color:var(--buzz-green);">
+                        💡 SUGGESTED PULL REQUEST ACTIONS:
+                    </div>
+                    {suggested_cards}
+                </div>"#,
+                suggested_cards = suggested_cards
+            ));
+        }
+    }
+
+    templates::render_chat_turn(trimmed_q, &reply_text, &actions_html)
 }
 
 // ============================================================================
@@ -3760,14 +4074,17 @@ pub mod templates {
 
                     <!-- Quick Prompt Chips -->
                     <div class="buzz-chat-prompts">
-                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Walk me through the highest-severity vulnerability in this report and how to fix it.')">
-                            Explain top vulnerability &amp; fix
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Walk me through the top vulnerabilities and suggest PRs I can open right now.')">
+                            Suggest PRs for top vulnerabilities
+                        </button>
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Create a PR now to fix the highest-severity vulnerability in this report.')">
+                            ⚡ Create PR for top vulnerability
                         </button>
                         <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('How do requests and data flow through the main files in this codebase?')">
                             Explain codebase architecture
                         </button>
-                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Which files should I prioritize refactoring first to improve our security grade?')">
-                            Prioritize security refactors
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Can we re-audit this repository to check for new commits?')">
+                            Re-audit repository
                         </button>
                     </div>
 
@@ -3830,7 +4147,7 @@ pub mod templates {
         )
     }
 
-    pub fn render_chat_turn(question: &str, answer: &str) -> String {
+    pub fn render_chat_turn(question: &str, answer: &str, actions_html: &str) -> String {
         format!(
             r#"<div class="buzz-chat-msg user">
                 <div class="buzz-msg-sender">YOU</div>
@@ -3839,9 +4156,11 @@ pub mod templates {
             <div class="buzz-chat-msg assistant">
                 <div class="buzz-msg-sender">⚡ BUZZ (GEMINI 4 ARGON)</div>
                 <div class="buzz-msg-body">{a}</div>
+                {actions}
             </div>"#,
             q = escape_html(question),
-            a = escape_html(answer)
+            a = escape_html(answer),
+            actions = actions_html
         )
     }
 }

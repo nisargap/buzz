@@ -1811,3 +1811,33 @@ body::before {
     flex-direction: column;
   }
 }
+
+/* Spinning Yellow Electric Loader in Talk to Buzz */
+.buzz-electric-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 4px;
+}
+
+.buzz-electric-spinner-svg {
+  width: 28px;
+  height: 28px;
+  image-rendering: pixelated;
+  animation: electric-spin 0.65s steps(8, end) infinite;
+  filter: drop-shadow(0 0 6px rgba(255, 224, 71, 0.85));
+  flex-shrink: 0;
+}
+
+@keyframes electric-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.buzz-electric-word {
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  color: var(--buzz-yellow);
+  text-shadow: 0 0 10px rgba(255, 224, 71, 0.55);
+  letter-spacing: 1px;
+}

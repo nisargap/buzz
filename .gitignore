@@ -3,5 +3,3 @@
 .env.local
 .vercel
 *.log
-__pycache__/
-.refactor/runs/

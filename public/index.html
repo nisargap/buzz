@@ -1701,13 +1701,27 @@
           if (thinkingEl && thinkingEl.parentNode) {
             thinkingEl.parentNode.removeChild(thinkingEl);
           }
-          if (messagesEl && html) {
+          if (messagesEl && res.ok && html) {
             const wrapper = document.createElement('div');
             wrapper.style.display = 'contents';
             wrapper.innerHTML = html;
             messagesEl.appendChild(wrapper);
             messagesEl.scrollTop = messagesEl.scrollHeight;
             persistActiveReportState();
+
+            // If Buzz returned an auto-executing Create PR action, launch it immediately!
+            const autoBtn = wrapper.querySelector('[data-auto-execute-pr="true"]');
+            if (autoBtn) {
+              autoBtn.removeAttribute('data-auto-execute-pr');
+              window.buzzApplyPatch(autoBtn, null);
+            }
+          } else if (messagesEl) {
+            const errWrapper = document.createElement('div');
+            errWrapper.className = 'buzz-chat-msg assistant';
+            errWrapper.innerHTML =
+              '<div class="buzz-msg-sender">⚡ BUZZ</div><div class="buzz-msg-body" style="color:var(--sev-critical);">Buzz encountered a temporary error processing your request. Please try again.</div>';
+            messagesEl.appendChild(errWrapper);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
           }
         } catch (_) {
           clearInterval(wordInterval);

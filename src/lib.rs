@@ -1090,14 +1090,16 @@ async fn call_gemini_argon_api(
         let cleaned_json = strip_markdown_fences(raw_text);
         if let Ok(parsed) = serde_json::from_str::<GeminiModelOutput>(cleaned_json) {
             let inspected_file_paths = snapshot.files.iter().map(|f| f.path.clone()).collect();
+            let (exposure_pct, _health_score, canonical_grade) =
+                compute_canonical_security_metrics(&parsed.findings);
             return Some(AuditReport {
                 scan_id: None,
                 repo_full_name: snapshot.full_name.clone(),
                 default_branch: snapshot.default_branch.clone(),
                 commit_sha: snapshot.commit_sha.clone(),
                 model_used: format!("{} (1M Context Live)", config.gemini_model),
-                risk_score: parsed.risk_score.min(100),
-                grade: parsed.grade,
+                risk_score: exposure_pct,
+                grade: canonical_grade,
                 executive_summary: parsed.executive_summary,
                 files_inspected: snapshot.files.len(),
                 total_tree_files: snapshot.total_tree_files,
@@ -1116,6 +1118,37 @@ async fn call_gemini_argon_api(
     }
 
     None
+}
+
+/// Canonical deterministic calculation of Threat Exposure % (0..=100, Lower = Safer),
+/// Security Health Score (0..=100, Higher = Safer), and Security Grade (A..F).
+pub fn compute_canonical_security_metrics(
+    findings: &[VulnerabilityFinding],
+) -> (u32, u32, String) {
+    let mut raw_exposure_pts = 0u32;
+    for f in findings {
+        if f.patch_created {
+            continue;
+        }
+        let pts = match f.severity.to_uppercase().as_str() {
+            "CRITICAL" => 22,
+            "HIGH" => 12,
+            "MEDIUM" => 6,
+            _ => 2,
+        };
+        raw_exposure_pts += pts;
+    }
+    let exposure_pct = raw_exposure_pts.min(100);
+    let health_score = 100_u32.saturating_sub(exposure_pct);
+    let grade = match health_score {
+        90..=100 => "A",
+        75..=89 => "B",
+        55..=74 => "C",
+        35..=54 => "D",
+        _ => "F",
+    }
+    .to_string();
+    (exposure_pct, health_score, grade)
 }
 
 fn strip_markdown_fences(raw: &str) -> &str {
@@ -1267,21 +1300,7 @@ fn synthesize_live_repo_audit(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let risk_score = if findings.is_empty() {
-        5
-    } else {
-        let weighted: f32 = findings.iter().map(|f| f.cvss_score * 2.8).sum();
-        (weighted.round() as u32).clamp(14, 96)
-    };
-
-    let grade = match risk_score {
-        0..=15 => "A",
-        16..=35 => "B",
-        36..=60 => "C",
-        61..=80 => "D",
-        _ => "F",
-    }
-    .to_string();
+    let (risk_score, _health_score, grade) = compute_canonical_security_metrics(&findings);
 
     let inspected_file_paths: Vec<String> = snapshot.files.iter().map(|f| f.path.clone()).collect();
     let sample_files: Vec<&str> = inspected_file_paths
@@ -1621,13 +1640,10 @@ pub async fn run_buzz_codebase_chat_html(
         );
     }
 
-    // 1. Load the existing AuditReport from Supabase or from the client's report_context
-    //    (NEVER silently re-audit the repository during chat!)
+    // 1. Parse the in-memory `report_context` from the form POST first (0ms latency!).
+    //    Only query Supabase if `report_context` was empty.
     let mut loaded_report: Option<AuditReport> = None;
-    if let Some(sid) = scan_id.filter(|s| !s.trim().is_empty()) {
-        loaded_report = fetch_saved_scan_by_id(client, config, sid).await;
-    }
-    if loaded_report.is_none() && !report_context.trim().is_empty() {
+    if !report_context.trim().is_empty() {
         if let Ok(parsed_val) = serde_json::from_str::<serde_json::Value>(report_context) {
             let findings: Vec<VulnerabilityFinding> = parsed_val
                 .get("findings")
@@ -1643,15 +1659,6 @@ pub async fn run_buzz_codebase_chat_html(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let grade = parsed_val
-                .get("grade")
-                .and_then(|v| v.as_str())
-                .unwrap_or("A")
-                .to_string();
-            let risk = parsed_val
-                .get("risk_score")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
             let paths: Vec<String> = parsed_val
                 .get("inspected_file_paths")
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -1659,6 +1666,8 @@ pub async fn run_buzz_codebase_chat_html(
             let diagram: Option<CodebaseDiagram> = parsed_val
                 .get("diagram")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let (exposure_pct, _health_score, canonical_grade) =
+                compute_canonical_security_metrics(&findings);
 
             loaded_report = Some(AuditReport {
                 scan_id: scan_id.map(|s| s.to_string()),
@@ -1666,8 +1675,8 @@ pub async fn run_buzz_codebase_chat_html(
                 default_branch: branch,
                 commit_sha: "HEAD".to_string(),
                 model_used: config.gemini_model.clone(),
-                risk_score: risk,
-                grade,
+                risk_score: exposure_pct,
+                grade: canonical_grade,
                 executive_summary: summary,
                 files_inspected: paths.len(),
                 total_tree_files: paths.len(),
@@ -1684,11 +1693,44 @@ pub async fn run_buzz_codebase_chat_html(
             });
         }
     }
+    if loaded_report.is_none() {
+        if let Some(sid) = scan_id.filter(|s| !s.trim().is_empty()) {
+            loaded_report = fetch_saved_scan_by_id(client, config, sid).await;
+        }
+    }
 
-    let report_json_for_prompt = if let Some(rep) = &loaded_report {
-        serde_json::to_string_pretty(rep).unwrap_or_else(|_| report_context.to_string())
+    // Build a compact, high-signal summary of the report (~2 KB) so Gemini responds in ~1s without timeouts
+    let compact_context_for_prompt = if let Some(rep) = &loaded_report {
+        let compact_findings: Vec<serde_json::Value> = rep
+            .findings
+            .iter()
+            .take(12)
+            .map(|f| {
+                serde_json::json!({
+                    "cve_id": f.cve_id,
+                    "severity": f.severity,
+                    "title": f.title,
+                    "file_path": f.file_path,
+                    "line_reference": f.line_reference,
+                    "explanation": f.explanation,
+                    "remediation_patch": f.remediation_patch,
+                    "patch_created": f.patch_created
+                })
+            })
+            .collect();
+        serde_json::to_string(&serde_json::json!({
+            "repo": rep.repo_full_name,
+            "branch": rep.default_branch,
+            "grade": rep.grade,
+            "threat_exposure_pct": rep.risk_score,
+            "security_health_score": 100_u32.saturating_sub(rep.risk_score),
+            "summary": rep.executive_summary,
+            "files": rep.inspected_file_paths.iter().take(35).collect::<Vec<_>>(),
+            "findings": compact_findings
+        }))
+        .unwrap_or_default()
     } else {
-        report_context.to_string()
+        report_context.chars().take(4000).collect()
     };
 
     let q_lower = trimmed_q.to_ascii_lowercase();
@@ -1711,7 +1753,7 @@ pub async fn run_buzz_codebase_chat_html(
         && !q_lower.contains("can you")
         && !q_lower.contains("how do");
 
-    // 2. Call Gemini 4 Argon for structured chat response + action proposals
+    // 2. Call fast Gemini Flash model with a strict 6.5s timeout so Vercel functions never time out
     let mut reply_text = String::new();
     let mut ask_confirm_reaudit = user_asked_reaudit;
     let mut suggest_pr_cve_ids: Vec<String> = Vec::new();
@@ -1720,39 +1762,31 @@ pub async fn run_buzz_codebase_chat_html(
     if let Some(api_key) = &config.gemini_api_key {
         let prompt = format!(
             "You are Buzz, an interactive security auditor and codebase assistant powered by Gemini 4 Argon.\n\
-             You are chatting with a developer about their GitHub repository `{repo}` using the existing Audit Report context below.\n\n\
-             IMPORTANT BEHAVIOR RULES:\n\
-             1. NEVER re-audit automatically. If the user asks to re-audit, rescan, or check new commits, set `\"ask_confirm_reaudit\": true` and politely ask them in `\"reply\"` to confirm running a re-audit using the confirmation button below.\n\
-             2. You can suggest creating GitHub Pull Requests for findings in the report! Whenever you discuss specific vulnerabilities or fixes, list their `cve_id`s in `\"suggest_pr_cve_ids\"` so the UI displays 1-click Create PR buttons.\n\
-             3. If the user explicitly commands you to create/open/put up a PR right now (e.g. 'Create a PR for CWE-284' or 'Open a PR for the top vulnerability'), set `\"execute_pr_now_cve_id\"` to that finding's `cve_id` (and explain in `\"reply\"` that you are opening the Pull Request now).\n\n\
-             Return strictly valid JSON matching this schema:\n\
-             {{\"reply\": \"Clear, helpful answer referencing exact files, lines, and CVEs\", \
-             \"ask_confirm_reaudit\": false, \
-             \"suggest_pr_cve_ids\": [\"CVE-or-CWE-ID\"], \
-             \"execute_pr_now_cve_id\": null}}\n\n\
-             === EXISTING AUDIT REPORT CONTEXT ({repo}) ===\n{report_ctx}\n\n\
+             You are chatting with a developer about their GitHub repository `{repo}` using the Audit Report context below.\n\n\
+             RULES:\n\
+             1. NEVER re-audit automatically. If the user asks to re-audit or rescan, set `\"ask_confirm_reaudit\": true` and ask them in `\"reply\"` to click the Confirm Re-Audit button below.\n\
+             2. Whenever discussing vulnerabilities or fixes from the report, include their `cve_id`s in `\"suggest_pr_cve_ids\"`.\n\
+             3. If the user explicitly commands you to create/open a PR right now, set `\"execute_pr_now_cve_id\"` to that finding's `cve_id`.\n\n\
+             Return JSON: {{\"reply\": \"string\", \"ask_confirm_reaudit\": false, \"suggest_pr_cve_ids\": [\"string\"], \"execute_pr_now_cve_id\": null}}\n\n\
+             === AUDIT REPORT CONTEXT ({repo}) ===\n{report_ctx}\n\n\
              === USER MESSAGE ===\n{q}",
             repo = clean_repo,
-            report_ctx = report_json_for_prompt,
+            report_ctx = compact_context_for_prompt,
             q = trimmed_q
         );
 
-        let candidate_models = [
-            config.gemini_model.as_str(),
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
-            "gemini-2.0-flash",
-        ];
+        let fast_models = ["gemini-2.0-flash", "gemini-2.5-flash"];
 
         let payload = serde_json::json!({
             "contents": [{ "parts": [{ "text": prompt }] }],
             "generationConfig": {
                 "temperature": 0.2,
+                "maxOutputTokens": 650,
                 "responseMimeType": "application/json"
             }
         });
 
-        for model_id in candidate_models {
+        for model_id in fast_models {
             let url = format!(
                 "{}/models/{}:generateContent?key={}",
                 config.gemini_api_base.trim_end_matches('/'),
@@ -1762,6 +1796,7 @@ pub async fn run_buzz_codebase_chat_html(
             if let Ok(resp) = client
                 .post(&url)
                 .header("x-goog-api-key", api_key)
+                .timeout(std::time::Duration::from_secs(6))
                 .json(&payload)
                 .send()
                 .await
@@ -1773,7 +1808,8 @@ pub async fn run_buzz_codebase_chat_html(
                             .and_then(|v| v.as_str())
                         {
                             let cleaned = strip_markdown_fences(raw_text);
-                            if let Ok(parsed) = serde_json::from_str::<GeminiChatJsonOutput>(cleaned)
+                            if let Ok(parsed) =
+                                serde_json::from_str::<GeminiChatJsonOutput>(cleaned)
                             {
                                 reply_text = parsed.reply;
                                 ask_confirm_reaudit =
@@ -1782,8 +1818,11 @@ pub async fn run_buzz_codebase_chat_html(
                                 execute_pr_now_cve_id = parsed.execute_pr_now_cve_id.filter(|s| {
                                     !s.trim().is_empty() && s.trim() != "null"
                                 });
-                                break;
+                            } else {
+                                // Use the raw response directly rather than making another slow LLM call
+                                reply_text = cleaned.to_string();
                             }
+                            break;
                         }
                     }
                 }
@@ -1877,48 +1916,69 @@ pub async fn run_buzz_codebase_chat_html(
         ));
     }
 
-    // Action B: Execute Create PR directly if requested by the user
+    // Action B: Auto-execute Create PR if requested by the user (delegates execution to /api/apply_patch on arrival so /api/chat never times out!)
     if let (Some(exec_cve), Some(rep)) = (&execute_pr_now_cve_id, &loaded_report) {
-        if let Some(finding) = rep
+        if let Some(f) = rep
             .findings
             .iter()
             .find(|f| f.cve_id.eq_ignore_ascii_case(exec_cve))
             .or_else(|| rep.findings.first())
         {
+            let _ = github_token;
+            let finding_id = templates::escape_html(f.id.as_deref().unwrap_or(""));
             let patch_token = compute_patch_signature(
                 config,
                 &rep.repo_full_name,
                 &rep.default_branch,
-                &finding.file_path,
-                &finding.cve_id,
+                &f.file_path,
+                &f.cve_id,
             )
             .unwrap_or_default();
+            let unique_slot = format!(
+                "chat-pr-exec-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() % 100_000)
+                    .unwrap_or(1)
+            );
 
-            let patch_req = PatchRequest {
-                finding_id: finding.id.clone().unwrap_or_default(),
-                repo: rep.repo_full_name.clone(),
-                branch: rep.default_branch.clone(),
-                cve_id: finding.cve_id.clone(),
-                title: finding.title.clone(),
-                file_path: finding.file_path.clone(),
-                line_reference: finding.line_reference.clone(),
-                remediation_patch: finding.remediation_patch.clone(),
-                patch_token,
-            };
-
-            let outcome =
-                create_remediation_pull_request(client, config, &patch_req, github_token).await;
-            let outcome_html = templates::render_pr_outcome(&outcome);
             actions_html.push_str(&format!(
                 r#"<div class="chat-action-box" style="margin-top:12px;padding:12px;background:#061512;border:2px solid var(--buzz-green);">
                     <div style="font-family:var(--font-display);font-size:0.62rem;color:var(--buzz-green);margin-bottom:8px;">
-                        ⚡ EXECUTED PR ACTION FOR {cve} ({file})
+                        ⚡ OPENING GITHUB PULL REQUEST FOR {cve} ({file})...
                     </div>
-                    {outcome_html}
+                    <div id="{slot}">
+                        <form style="margin:0;display:inline-block;">
+                            <input type="hidden" name="finding_id" value="{finding_id}" />
+                            <input type="hidden" name="repo" value="{repo}" />
+                            <input type="hidden" name="branch" value="{branch}" />
+                            <input type="hidden" name="cve_id" value="{cve}" />
+                            <input type="hidden" name="title" value="{title}" />
+                            <input type="hidden" name="file_path" value="{file}" />
+                            <input type="hidden" name="line_reference" value="{line}" />
+                            <input type="hidden" name="remediation_patch" value="{patch}" />
+                            <input type="hidden" name="patch_token" value="{patch_token}" />
+                            <button
+                                type="button"
+                                class="pixel-btn pixel-btn-apply"
+                                data-auto-execute-pr="true"
+                                onclick="return window.buzzApplyPatch(this, event);"
+                            >
+                                ⚡ EXECUTING PR FOR {cve}...
+                            </button>
+                        </form>
+                    </div>
                 </div>"#,
-                cve = templates::escape_html(&finding.cve_id),
-                file = templates::escape_html(&finding.file_path),
-                outcome_html = outcome_html
+                cve = templates::escape_html(&f.cve_id),
+                file = templates::escape_html(&f.file_path),
+                slot = unique_slot,
+                finding_id = finding_id,
+                repo = templates::escape_html(&rep.repo_full_name),
+                branch = templates::escape_html(&rep.default_branch),
+                title = templates::escape_html(&f.title),
+                line = templates::escape_html(&f.line_reference),
+                patch = templates::escape_html(&f.remediation_patch),
+                patch_token = templates::escape_html(&patch_token)
             ));
         }
     } else if let Some(rep) = &loaded_report {
@@ -2320,6 +2380,9 @@ pub async fn fetch_saved_scan_by_id(
         .filter(|v| !v.is_null())
         .and_then(|v| serde_json::from_value(v.clone()).ok());
 
+    let (exposure_pct, _health_score, canonical_grade) =
+        compute_canonical_security_metrics(&findings);
+
     Some(AuditReport {
         scan_id: Some(clean_id),
         repo_full_name: scan
@@ -2342,15 +2405,8 @@ pub async fn fetch_saved_scan_by_id(
             .and_then(|v| v.as_str())
             .unwrap_or("gemini-4-argon")
             .to_string(),
-        risk_score: scan
-            .get("risk_score")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32,
-        grade: scan
-            .get("grade")
-            .and_then(|v| v.as_str())
-            .unwrap_or("A")
-            .to_string(),
+        risk_score: exposure_pct,
+        grade: canonical_grade,
         executive_summary: scan
             .get("executive_summary")
             .and_then(|v| v.as_str())
@@ -3478,7 +3534,15 @@ pub mod templates {
         for s in scans {
             let repo = escape_html(&s.repo_full_name);
             let branch = escape_html(&s.default_branch);
-            let grade = escape_html(&s.grade);
+            let exposure = s.risk_score.min(100);
+            let health_score = 100_u32.saturating_sub(exposure);
+            let canonical_grade = match health_score {
+                90..=100 => "A",
+                75..=89 => "B",
+                55..=74 => "C",
+                35..=54 => "D",
+                _ => "F",
+            };
             let scan_id = escape_html(&s.id);
             let date_short: String = s.created_at.chars().take(16).collect();
             let date_clean = escape_html(&date_short.replace('T', " "));
@@ -3489,7 +3553,7 @@ pub mod templates {
                         <span class="grade-pill grade-{grade}">{grade}</span>
                         <div>
                             <div class="saved-scan-repo">{repo} <span style="color:var(--text-dim);">({branch})</span></div>
-                            <div class="saved-scan-meta">RISK: {risk}/100 • {files} FILES • {date}</div>
+                            <div class="saved-scan-meta">SCORE: {health}/100 ({exposure}% EXPOSURE) • {files} FILES • {date}</div>
                         </div>
                     </div>
                     <div class="saved-scan-actions">
@@ -3518,10 +3582,11 @@ pub mod templates {
                         </button>
                     </div>
                 </div>"##,
-                grade = grade,
+                grade = canonical_grade,
                 repo = repo,
                 branch = branch,
-                risk = s.risk_score,
+                health = health_score,
+                exposure = exposure,
                 files = s.files_inspected,
                 date = date_clean,
                 scan_id = scan_id

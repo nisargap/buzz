@@ -3499,7 +3499,53 @@ pub mod templates {
         }
 
         let kb_loaded = report.total_bytes_loaded as f64 / 1024.0;
-        let grade_escaped = escape_html(&report.grade);
+
+        // Compute deterministic, transparent Security Score (Higher = Safer) & Threat Exposure % (Lower = Safer)
+        let mut crit_count = 0usize;
+        let mut high_count = 0usize;
+        let mut med_count = 0usize;
+        let mut low_count = 0usize;
+        let mut patched_count = 0usize;
+        let mut raw_exposure_pts = 0u32;
+
+        for f in &report.findings {
+            let sev_up = f.severity.to_uppercase();
+            let pts = match sev_up.as_str() {
+                "CRITICAL" => {
+                    crit_count += 1;
+                    22
+                }
+                "HIGH" => {
+                    high_count += 1;
+                    12
+                }
+                "MEDIUM" => {
+                    med_count += 1;
+                    6
+                }
+                _ => {
+                    low_count += 1;
+                    2
+                }
+            };
+            if f.patch_created {
+                patched_count += 1;
+            } else {
+                raw_exposure_pts += pts;
+            }
+        }
+
+        let exposure_pct = raw_exposure_pts.min(100);
+        let security_health_score = 100_u32.saturating_sub(exposure_pct);
+        let (computed_grade, verdict_label, meter_color) = match security_health_score {
+            90..=100 => ("A", "HARDENED • MINIMAL RISK", "var(--sev-clean)"),
+            75..=89 => ("B", "STRONG • LOW RISK", "var(--sev-low)"),
+            55..=74 => ("C", "MODERATE RISK • PATCH ADVISED", "var(--sev-medium)"),
+            35..=54 => ("D", "ELEVATED RISK • VULNERABLE", "var(--sev-high)"),
+            _ => ("F", "CRITICAL RISK • URGENT PATCH NEEDED", "var(--sev-critical)"),
+        };
+
+        let grade_escaped = escape_html(computed_grade);
         let compact_badge = if report.auto_compacted {
             format!(
                 r#"<span class="meta-tag" style="border-color:var(--buzz-green);color:var(--buzz-green);">⚡ AUTO-COMPACTED: -{} TOKENS</span>"#,
@@ -3595,23 +3641,44 @@ pub mod templates {
                     </div>
 
                     <div class="grade-box">
-                        <div>
-                            <div style="font-size:0.68rem;color:var(--text-muted);">SECURITY GRADE</div>
-                            <div style="font-family:var(--font-code);font-size:0.85rem;color:var(--buzz-yellow);">
-                                RISK SCORE: {risk}/100
+                        <div style="text-align:right;">
+                            <div style="font-size:0.68rem;color:var(--text-muted);letter-spacing:0.5px;">
+                                SECURITY HEALTH SCORE (HIGHER = SAFER)
+                            </div>
+                            <div style="font-family:var(--font-code);font-weight:600;font-size:1.05rem;color:{meter_color};margin:2px 0;">
+                                {health_score} / 100
+                            </div>
+                            <div style="font-family:var(--font-code);font-size:0.74rem;color:var(--buzz-yellow);">
+                                {verdict_label}
                             </div>
                         </div>
-                        <div class="grade-letter grade-{grade}">{grade}</div>
+                        <div class="grade-letter grade-{grade}" title="Grade A (90-100) = Hardened | Grade B (75-89) = Low Risk | Grade C (55-74) = Moderate Risk | Grade D (35-54) = Elevated Risk | Grade F (0-34) = Critical Risk">{grade}</div>
                     </div>
                 </div>
 
                 <div class="risk-meter-wrap">
-                    <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted);margin-bottom:6px;">
-                        <span>THREAT EXPOSURE METER</span>
-                        <span>{risk}%</span>
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:0.76rem;font-family:var(--font-code);margin-bottom:6px;">
+                        <span style="color:var(--text-muted);">
+                            THREAT EXPOSURE METER <strong style="color:var(--buzz-cyan);">(0% = SAFE • 100% = CRITICAL DANGER — LOWER IS SAFER)</strong>
+                        </span>
+                        <strong style="color:{meter_color};">{exposure_pct}% EXPOSURE ({verdict_label})</strong>
                     </div>
                     <div class="risk-meter-bar">
-                        <div class="risk-meter-fill" style="width:{risk}%;"></div>
+                        <div class="risk-meter-fill" style="width:{exposure_pct}%;background:repeating-linear-gradient(to right, {meter_color} 0px, {meter_color} 12px, #080d1e 12px, #080d1e 15px);"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-family:var(--font-code);font-size:0.68rem;color:var(--text-dim);margin-top:4px;">
+                        <span>0% SAFE (GRADE A)</span>
+                        <span>25% LOW (GRADE B)</span>
+                        <span>50% MODERATE (GRADE C)</span>
+                        <span>75% HIGH (GRADE D)</span>
+                        <span>100% CRITICAL (GRADE F)</span>
+                    </div>
+                    <div class="report-meta-tags" style="margin-top:10px;">
+                        <span class="meta-tag" style="border-color:var(--sev-critical);color:var(--sev-critical);">CRITICAL: {crit_count} (-22 pts ea)</span>
+                        <span class="meta-tag" style="border-color:var(--sev-high);color:var(--sev-high);">HIGH: {high_count} (-12 pts ea)</span>
+                        <span class="meta-tag" style="border-color:var(--sev-medium);color:var(--sev-medium);">MEDIUM: {med_count} (-6 pts ea)</span>
+                        <span class="meta-tag" style="border-color:var(--sev-low);color:var(--sev-low);">LOW: {low_count} (-2 pts ea)</span>
+                        <span class="meta-tag" style="border-color:var(--buzz-green);color:var(--buzz-green);">✓ PATCHED PRs: {patched_count} (Restored)</span>
                     </div>
                 </div>
 
@@ -3746,7 +3813,15 @@ pub mod templates {
             compact_badge = compact_badge,
             cves = report.cves_checked,
             hits = report.findings.len(),
-            risk = report.risk_score,
+            health_score = security_health_score,
+            exposure_pct = exposure_pct,
+            verdict_label = verdict_label,
+            meter_color = meter_color,
+            crit_count = crit_count,
+            high_count = high_count,
+            med_count = med_count,
+            low_count = low_count,
+            patched_count = patched_count,
             grade = grade_escaped,
             summary = escape_html(&report.executive_summary),
             files_chips = files_chips,

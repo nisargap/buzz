@@ -146,6 +146,10 @@ body::before {
   max-width: 920px;
 }
 
+.wizard-step.wizard-step-front {
+  max-width: 980px;
+}
+
 @keyframes step-appear {
   from {
     opacity: 0;
@@ -158,7 +162,7 @@ body::before {
 }
 
 /* ==========================================================================
-   STEP 1: MINIMAL FRONT PAGE (JUST BUZZ LOGO + ANALYZE BUTTON)
+   STEP 1: FRONT PAGE (LARGE BUZZ LOGO + CIRCULAR PIXEL WIND + 3 FEATURE CARDS)
    ========================================================================== */
 
 .front-hero {
@@ -166,21 +170,54 @@ body::before {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 26px;
+  gap: 22px;
+  width: 100%;
 }
 
 .front-logo-wrap {
   position: relative;
+  width: 330px;
+  height: 330px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
-  filter: drop-shadow(0 12px 0 rgba(2, 4, 12, 0.65));
+  filter: drop-shadow(0 14px 0 rgba(2, 4, 12, 0.72));
+}
+
+/* Circular Pixelated Wind Rings Orbiting Around the Buzz Logo */
+.pixel-wind-orbit-outer,
+.pixel-wind-orbit-inner {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+.pixel-wind-orbit-outer {
+  animation: pixel-wind-circle-cw 5.6s steps(24, end) infinite;
+}
+
+.pixel-wind-orbit-inner {
+  animation: pixel-wind-circle-ccw 4.0s steps(20, end) infinite;
+}
+
+@keyframes pixel-wind-circle-cw {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes pixel-wind-circle-ccw {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
 }
 
 .front-logo-svg {
-  width: 210px;
-  height: 210px;
+  position: relative;
+  z-index: 2;
+  width: 268px;
+  height: 268px;
   image-rendering: pixelated;
   animation: pixel-float 1.6s steps(4, end) infinite;
 }
@@ -192,12 +229,115 @@ body::before {
 
 .front-wordmark {
   font-family: var(--font-display);
-  font-size: 2.2rem;
+  font-size: 2.5rem;
   color: var(--buzz-yellow);
   text-shadow:
     4px 4px 0 var(--border-dark),
-    0 0 18px rgba(255, 224, 71, 0.28);
-  letter-spacing: 4px;
+    0 0 22px rgba(255, 224, 71, 0.34);
+  letter-spacing: 5px;
+  margin-top: -6px;
+}
+
+/* Three Separately Colored Feature Cards with Left Pixel Icons */
+.front-features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  width: 100%;
+  margin-top: 12px;
+}
+
+@media (max-width: 860px) {
+  .front-features-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.feature-pixel-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  text-align: left;
+  padding: 18px 18px;
+  border: 4px solid var(--border-blue);
+  box-shadow:
+    0 0 0 3px var(--border-dark),
+    6px 6px 0 0 var(--border-dark);
+  transition: transform 0.08s steps(2, end);
+}
+
+.feature-pixel-card:hover {
+  transform: translateY(-4px);
+}
+
+/* Card 1: Electric Gold / Amber Security Audit Theme */
+.feature-pixel-card.card-gold {
+  background: linear-gradient(135deg, rgba(44, 31, 8, 0.94) 0%, rgba(19, 15, 36, 0.95) 100%);
+  border-color: var(--buzz-yellow);
+}
+
+/* Card 2: Cyber Emerald Automated PR Theme */
+.feature-pixel-card.card-green {
+  background: linear-gradient(135deg, rgba(7, 38, 27, 0.94) 0%, rgba(11, 21, 40, 0.95) 100%);
+  border-color: var(--buzz-green);
+}
+
+/* Card 3: Neon Cyan / Indigo Codebase Diagrams Theme */
+.feature-pixel-card.card-cyan {
+  background: linear-gradient(135deg, rgba(8, 32, 54, 0.94) 0%, rgba(22, 16, 48, 0.95) 100%);
+  border-color: var(--buzz-cyan);
+}
+
+.feature-icon-box {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--terminal-bg);
+  border: 3px solid var(--border-dark);
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.7);
+}
+
+.card-gold .feature-icon-box {
+  border-color: var(--buzz-yellow);
+  box-shadow: 3px 3px 0 0 rgba(255, 224, 71, 0.25);
+}
+
+.card-green .feature-icon-box {
+  border-color: var(--buzz-green);
+  box-shadow: 3px 3px 0 0 rgba(46, 230, 138, 0.25);
+}
+
+.card-cyan .feature-icon-box {
+  border-color: var(--buzz-cyan);
+  box-shadow: 3px 3px 0 0 rgba(72, 209, 255, 0.25);
+}
+
+.feature-icon-svg {
+  width: 38px;
+  height: 38px;
+  image-rendering: pixelated;
+}
+
+.feature-card-title {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  line-height: 1.45;
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.card-gold .feature-card-title { color: var(--buzz-yellow); }
+.card-green .feature-card-title { color: var(--buzz-green); }
+.card-cyan .feature-card-title { color: var(--buzz-cyan); }
+
+.feature-card-desc {
+  font-family: var(--font-code);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 /* ==========================================================================
@@ -871,6 +1011,10 @@ body::before {
   font-family: var(--font-display);
   font-size: 0.62rem;
   padding: 7px 12px;
+  cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
   box-shadow:
     inset -2px -2px 0 0 #159454,
     inset 2px 2px 0 0 #9effce,
@@ -882,10 +1026,9 @@ body::before {
   color: #02120a;
 }
 
-.htmx-request .pixel-btn-apply,
-.pixel-btn-apply.htmx-request {
-  opacity: 0.7;
-  pointer-events: none;
+.pixel-btn-apply:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .pr-badge-row {
@@ -1052,10 +1195,10 @@ body::before {
 }
 
 /* ==========================================================================
-   SAVED REPO AUDITS LIST & AUTH STATUS BAR
+   GLOBAL TOP-RIGHT USER AUTH PILL (VISIBLE ON ALL WIZARD PAGES)
    ========================================================================== */
 
-.auth-bar-row {
+.global-auth-bar {
   position: relative;
   z-index: 2;
   display: flex;
@@ -1067,25 +1210,40 @@ body::before {
   padding: 20px 24px 0;
 }
 
-.auth-bar-row .pixel-btn {
+.global-auth-bar .pixel-btn {
   width: auto;
   max-width: 100%;
   min-height: 44px;
 }
 
-.auth-status {
+.user-badge-pill {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
   max-width: 100%;
-  font-family: var(--font-code);
-  font-size: 0.8rem;
-  color: var(--text-muted);
   overflow-wrap: anywhere;
+  background: var(--panel-bg);
+  border: 3px solid var(--buzz-green);
+  box-shadow: 4px 4px 0 0 var(--border-dark);
+  padding: 6px 12px;
+  font-family: var(--font-code);
+  font-size: 0.78rem;
+  color: var(--text-main);
 }
 
-.auth-status .led-dot {
-  flex-shrink: 0;
+.user-avatar-pixel {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--buzz-yellow);
+  image-rendering: pixelated;
+  display: none;
 }
+
+/* ==========================================================================
+   SAVED REPO AUDITS LIST & AUTH STATUS BAR
+   ========================================================================== */
 
 .saved-audits-panel {
   margin-top: 22px;
@@ -1157,4 +1315,224 @@ body::before {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ==========================================================================
+   PIXEL CHECKBOX FOR DIAGRAM SELECTION
+   ========================================================================== */
+
+.pixel-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--terminal-bg);
+  border: 2px solid var(--border-blue);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-code);
+  font-size: 0.84rem;
+  color: var(--text-main);
+}
+
+.pixel-checkbox-label:hover {
+  border-color: var(--buzz-cyan);
+}
+
+.pixel-checkbox-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  background: #050813;
+  border: 3px solid var(--buzz-cyan);
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+}
+
+.pixel-checkbox-input:checked {
+  background: var(--buzz-cyan);
+}
+
+.pixel-checkbox-input:checked::before {
+  content: "✓";
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  color: #04101e;
+  font-weight: 700;
+}
+
+/* ==========================================================================
+   ARTIST BUZZ WITH BERET & PAINTBRUSH PAINTING A PIXELATED CANVAS
+   ========================================================================== */
+
+.buzz-painter-box {
+  display: none;
+  width: 100%;
+  background: #081026;
+  border: 3px solid var(--buzz-yellow);
+  box-shadow: inset 0 0 22px rgba(255, 224, 71, 0.14);
+  padding: 16px 18px;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.buzz-painter-box.active {
+  display: flex;
+  animation: step-appear 0.16s steps(2, end);
+}
+
+.buzz-painter-scene-svg {
+  width: 244px;
+  height: 192px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.75));
+}
+
+.painter-bolt-bob {
+  animation: bolt-coder-bounce 0.45s steps(2, end) infinite;
+}
+
+.painter-brush-arm {
+  animation: paintbrush-sweep 0.55s steps(4, end) infinite;
+  transform-origin: 22px 20px;
+}
+
+@keyframes paintbrush-sweep {
+  0%   { transform: translate(0px, 0px); }
+  25%  { transform: translate(2px, -3px); }
+  50%  { transform: translate(3px, 2px); }
+  75%  { transform: translate(1px, 4px); }
+  100% { transform: translate(0px, 0px); }
+}
+
+.canvas-stroke-1 {
+  animation: canvas-reveal-1 1.6s steps(2, end) infinite;
+}
+
+.canvas-stroke-2 {
+  animation: canvas-reveal-2 1.6s steps(2, end) infinite;
+}
+
+.canvas-stroke-3 {
+  animation: canvas-reveal-3 1.6s steps(2, end) infinite;
+}
+
+@keyframes canvas-reveal-1 {
+  0%, 15%  { opacity: 0.25; }
+  20%, 100% { opacity: 1; }
+}
+
+@keyframes canvas-reveal-2 {
+  0%, 45%  { opacity: 0.2; }
+  50%, 100% { opacity: 1; }
+}
+
+@keyframes canvas-reveal-3 {
+  0%, 70%  { opacity: 0.15; }
+  75%, 100% { opacity: 1; }
+}
+
+/* ==========================================================================
+   COMPONENT FLOW DIAGRAM NODES & DIRECTIONAL ARROWS
+   ========================================================================== */
+
+.diag-flow-pipeline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 8px 0;
+}
+
+.diag-node-card {
+  width: 100%;
+  max-width: 720px;
+  background: var(--terminal-bg);
+  border: 3px solid var(--border-blue);
+  box-shadow: 5px 5px 0 0 var(--border-dark);
+  padding: 16px 18px;
+  font-family: var(--font-code);
+  text-align: left;
+}
+
+.diag-node-card.layer-frontend { border-color: var(--buzz-cyan); }
+.diag-node-card.layer-api      { border-color: var(--buzz-yellow); }
+.diag-node-card.layer-core     { border-color: var(--buzz-green); }
+.diag-node-card.layer-data     { border-color: #b47cff; }
+
+.diag-node-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.diag-layer-badge {
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  padding: 5px 8px;
+  border: 2px solid var(--border-dark);
+}
+
+.diag-layer-badge.layer-frontend { background: var(--buzz-cyan); color: #041924; }
+.diag-layer-badge.layer-api      { background: var(--buzz-yellow); color: #1f1700; }
+.diag-layer-badge.layer-core     { background: var(--buzz-green); color: #041d11; }
+.diag-layer-badge.layer-data     { background: #b47cff; color: #160829; }
+
+.diag-node-title {
+  font-family: var(--font-code);
+  font-weight: 600;
+  font-size: 0.98rem;
+  color: var(--text-main);
+}
+
+.diag-node-desc {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.diag-files-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diag-file-pill {
+  background: #0d1733;
+  border: 1px solid var(--border-blue);
+  color: var(--buzz-cyan);
+  font-family: var(--font-code);
+  font-size: 0.74rem;
+  padding: 3px 8px;
+}
+
+.diag-arrow-connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 6px 0;
+}
+
+.diag-arrow-label {
+  background: #0b1530;
+  border: 2px solid var(--buzz-cyan);
+  color: var(--buzz-yellow);
+  font-family: var(--font-code);
+  font-size: 0.74rem;
+  padding: 3px 10px;
+  margin-bottom: 2px;
+}
+
+.diag-arrow-svg {
+  width: 28px;
+  height: 34px;
+  image-rendering: pixelated;
 }

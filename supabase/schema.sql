@@ -82,6 +82,7 @@ ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS total_tree_files INTEGER NOT N
 ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS total_bytes_loaded INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS estimated_tokens INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS inspected_file_paths TEXT[] DEFAULT '{}';
+ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS diagram_json JSONB NULL;
 
 ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
 ALTER TABLE public.scan_findings ADD COLUMN IF NOT EXISTS cwe_id TEXT NOT NULL DEFAULT 'CWE-1035';
@@ -114,6 +115,12 @@ CREATE POLICY "Read access to scans"
 DROP POLICY IF EXISTS "Insert access to scans" ON public.scans;
 CREATE POLICY "Insert access to scans"
     ON public.scans FOR INSERT
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Update access to scans" ON public.scans;
+CREATE POLICY "Update access to scans"
+    ON public.scans FOR UPDATE
+    USING (true)
     WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Read access to scan findings" ON public.scan_findings;

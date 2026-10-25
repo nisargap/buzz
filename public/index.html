@@ -124,13 +124,10 @@
           </button>
         </div>
 
-        <!-- Connected GitHub Repo Dropdown Slot (populated via HTMX GET /api/repos) -->
+        <!-- Connected GitHub Repo Dropdown Slot (only shown when signed in) -->
         <div
           id="connected-repos-slot"
-          style="margin-top: 12px;"
-          hx-get="/api/repos"
-          hx-trigger="load"
-          hx-swap="innerHTML"
+          style="margin-top: 12px; display: none;"
         ></div>
 
         <div class="wizard-divider">— OR ENTER ANY GITHUB REPOSITORY —</div>
@@ -188,10 +185,10 @@
           </button>
         </form>
 
-        <!-- Persisted Repository Audits for the Logged-In User -->
-        <div class="saved-audits-panel">
+        <!-- Persisted Repository Audits (Strictly shown ONLY when signed in) -->
+        <div id="saved-audits-panel" class="saved-audits-panel" style="display: none;">
           <div class="saved-audits-header">
-            <span class="saved-audits-title">📂 SAVED REPOSITORY AUDITS</span>
+            <span class="saved-audits-title">📂 YOUR SAVED REPOSITORY AUDITS</span>
             <button
               type="button"
               class="pixel-btn pixel-btn-sm"
@@ -202,12 +199,7 @@
               ↻ REFRESH
             </button>
           </div>
-          <div
-            id="saved-audits-slot"
-            hx-get="/api/scans"
-            hx-trigger="load"
-            hx-swap="innerHTML"
-          >
+          <div id="saved-audits-slot">
             <div style="font-size: 0.74rem; color: var(--text-dim);">
               Loading saved repository audits...
             </div>
@@ -1055,7 +1047,7 @@
         stopAllAnalysisTimers();
         if (event && event.detail && event.detail.successful) {
           window.buzzGoToStep(4);
-          if (window.htmx) {
+          if (window.htmx && (githubUserHandle || githubProviderToken || supabaseUserId)) {
             htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
           }
         }
@@ -1176,19 +1168,31 @@
           }
         }
 
-        // 2. Update Step 2 Auth Button & Sign Out Button
+        // 2. Update Step 2 Auth Button, Sign Out Button, and Saved Audits / Connected Repos visibility
         const dot = document.getElementById('github-auth-dot');
         const label = document.getElementById('github-auth-label');
         const signOutBtn = document.getElementById('github-signout-btn');
+        const savedAuditsPanel = document.getElementById('saved-audits-panel');
+        const savedAuditsSlot = document.getElementById('saved-audits-slot');
+        const connectedReposSlot = document.getElementById('connected-repos-slot');
+
         if (dot && label) {
           if (isSignedIn) {
             dot.className = 'led-dot';
             label.textContent = '✓ SIGNED IN AS @' + displayHandle + ' (GITHUB OAUTH ACTIVE)';
             if (signOutBtn) signOutBtn.style.display = 'inline-flex';
+            if (savedAuditsPanel) savedAuditsPanel.style.display = 'block';
+            if (connectedReposSlot) connectedReposSlot.style.display = 'block';
           } else {
             dot.className = 'led-dot warn';
             label.textContent = 'SIGN IN WITH GITHUB (SUPABASE AUTH)';
             if (signOutBtn) signOutBtn.style.display = 'none';
+            if (savedAuditsPanel) savedAuditsPanel.style.display = 'none';
+            if (savedAuditsSlot) savedAuditsSlot.innerHTML = '';
+            if (connectedReposSlot) {
+              connectedReposSlot.style.display = 'none';
+              connectedReposSlot.innerHTML = '';
+            }
           }
         }
       }
@@ -1341,6 +1345,10 @@
         if (githubProviderToken && !githubUserHandle) {
           verifyGitHubProfileFromToken();
         }
+        if ((githubUserHandle || githubProviderToken || supabaseUserId) && window.htmx) {
+          htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
+          htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
+        }
         try {
           if (!supabaseClient && window.supabase) {
             supabaseClient = window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
@@ -1410,10 +1418,6 @@
         }
         clearSavedAuth();
         updateAuthBadge();
-        if (window.htmx) {
-          htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
-          htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
-        }
       };
 
       window.buzzSelectRepo = function (repoFullName) {

@@ -1450,6 +1450,11 @@ pub async fn fetch_user_saved_scans(
         .filter(|s| !s.is_empty() && s.len() == 36);
     let clean_gh_user = github_user.map(|s| s.trim()).filter(|s| !s.is_empty());
 
+    // Never return saved audits in a logged-out state
+    if clean_uid.is_none() && clean_gh_user.is_none() {
+        return Vec::new();
+    }
+
     let mut url = format!(
         "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&order=created_at.desc&limit=15",
         base_url.trim_end_matches('/')
@@ -1477,21 +1482,26 @@ pub async fn fetch_user_saved_scans(
         }
     }
 
-    // Fallback: return most recent scans if user-specific filter returned none yet
-    let recent_url = format!(
-        "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&order=created_at.desc&limit=10",
-        base_url.trim_end_matches('/')
-    );
-    if let Ok(resp) = client
-        .get(&recent_url)
-        .header("apikey", api_key)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .send()
-        .await
-    {
-        if resp.status().is_success() {
-            if let Ok(rows) = resp.json::<Vec<SavedScanSummary>>().await {
-                return rows;
+    // If user_id query returned empty (e.g. earlier scans saved under github_user only), check github_user
+    if clean_uid.is_some() {
+        if let Some(gh) = clean_gh_user {
+            let gh_url = format!(
+                "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&github_user=eq.{}&order=created_at.desc&limit=15",
+                base_url.trim_end_matches('/'),
+                urlencoding_simple(gh)
+            );
+            if let Ok(resp) = client
+                .get(&gh_url)
+                .header("apikey", api_key)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    if let Ok(rows) = resp.json::<Vec<SavedScanSummary>>().await {
+                        return rows;
+                    }
+                }
             }
         }
     }

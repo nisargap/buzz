@@ -1306,3 +1306,223 @@ body::before {
   align-items: center;
   gap: 6px;
 }
+
+/* ==========================================================================
+   PIXEL CHECKBOX FOR DIAGRAM SELECTION
+   ========================================================================== */
+
+.pixel-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--terminal-bg);
+  border: 2px solid var(--border-blue);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-code);
+  font-size: 0.84rem;
+  color: var(--text-main);
+}
+
+.pixel-checkbox-label:hover {
+  border-color: var(--buzz-cyan);
+}
+
+.pixel-checkbox-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  background: #050813;
+  border: 3px solid var(--buzz-cyan);
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+}
+
+.pixel-checkbox-input:checked {
+  background: var(--buzz-cyan);
+}
+
+.pixel-checkbox-input:checked::before {
+  content: "✓";
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  color: #04101e;
+  font-weight: 700;
+}
+
+/* ==========================================================================
+   ARTIST BUZZ WITH BERET & PAINTBRUSH PAINTING A PIXELATED CANVAS
+   ========================================================================== */
+
+.buzz-painter-box {
+  display: none;
+  width: 100%;
+  background: #081026;
+  border: 3px solid var(--buzz-yellow);
+  box-shadow: inset 0 0 22px rgba(255, 224, 71, 0.14);
+  padding: 16px 18px;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.buzz-painter-box.active {
+  display: flex;
+  animation: step-appear 0.16s steps(2, end);
+}
+
+.buzz-painter-scene-svg {
+  width: 244px;
+  height: 192px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.75));
+}
+
+.painter-bolt-bob {
+  animation: bolt-coder-bounce 0.45s steps(2, end) infinite;
+}
+
+.painter-brush-arm {
+  animation: paintbrush-sweep 0.55s steps(4, end) infinite;
+  transform-origin: 22px 20px;
+}
+
+@keyframes paintbrush-sweep {
+  0%   { transform: translate(0px, 0px); }
+  25%  { transform: translate(2px, -3px); }
+  50%  { transform: translate(3px, 2px); }
+  75%  { transform: translate(1px, 4px); }
+  100% { transform: translate(0px, 0px); }
+}
+
+.canvas-stroke-1 {
+  animation: canvas-reveal-1 1.6s steps(2, end) infinite;
+}
+
+.canvas-stroke-2 {
+  animation: canvas-reveal-2 1.6s steps(2, end) infinite;
+}
+
+.canvas-stroke-3 {
+  animation: canvas-reveal-3 1.6s steps(2, end) infinite;
+}
+
+@keyframes canvas-reveal-1 {
+  0%, 15%  { opacity: 0.25; }
+  20%, 100% { opacity: 1; }
+}
+
+@keyframes canvas-reveal-2 {
+  0%, 45%  { opacity: 0.2; }
+  50%, 100% { opacity: 1; }
+}
+
+@keyframes canvas-reveal-3 {
+  0%, 70%  { opacity: 0.15; }
+  75%, 100% { opacity: 1; }
+}
+
+/* ==========================================================================
+   COMPONENT FLOW DIAGRAM NODES & DIRECTIONAL ARROWS
+   ========================================================================== */
+
+.diag-flow-pipeline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 8px 0;
+}
+
+.diag-node-card {
+  width: 100%;
+  max-width: 720px;
+  background: var(--terminal-bg);
+  border: 3px solid var(--border-blue);
+  box-shadow: 5px 5px 0 0 var(--border-dark);
+  padding: 16px 18px;
+  font-family: var(--font-code);
+  text-align: left;
+}
+
+.diag-node-card.layer-frontend { border-color: var(--buzz-cyan); }
+.diag-node-card.layer-api      { border-color: var(--buzz-yellow); }
+.diag-node-card.layer-core     { border-color: var(--buzz-green); }
+.diag-node-card.layer-data     { border-color: #b47cff; }
+
+.diag-node-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.diag-layer-badge {
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  padding: 5px 8px;
+  border: 2px solid var(--border-dark);
+}
+
+.diag-layer-badge.layer-frontend { background: var(--buzz-cyan); color: #041924; }
+.diag-layer-badge.layer-api      { background: var(--buzz-yellow); color: #1f1700; }
+.diag-layer-badge.layer-core     { background: var(--buzz-green); color: #041d11; }
+.diag-layer-badge.layer-data     { background: #b47cff; color: #160829; }
+
+.diag-node-title {
+  font-family: var(--font-code);
+  font-weight: 600;
+  font-size: 0.98rem;
+  color: var(--text-main);
+}
+
+.diag-node-desc {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.diag-files-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diag-file-pill {
+  background: #0d1733;
+  border: 1px solid var(--border-blue);
+  color: var(--buzz-cyan);
+  font-family: var(--font-code);
+  font-size: 0.74rem;
+  padding: 3px 8px;
+}
+
+.diag-arrow-connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 6px 0;
+}
+
+.diag-arrow-label {
+  background: #0b1530;
+  border: 2px solid var(--buzz-cyan);
+  color: var(--buzz-yellow);
+  font-family: var(--font-code);
+  font-size: 0.74rem;
+  padding: 3px 10px;
+  margin-bottom: 2px;
+}
+
+.diag-arrow-svg {
+  width: 28px;
+  height: 34px;
+  image-rendering: pixelated;
+}

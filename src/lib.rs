@@ -194,6 +194,40 @@ fn default_confidence() -> String {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiagramNode {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_layer")]
+    pub layer: String,
+    #[serde(default)]
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+fn default_layer() -> String {
+    "CORE".to_string()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiagramEdge {
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CodebaseDiagram {
+    #[serde(default)]
+    pub architecture_summary: String,
+    #[serde(default)]
+    pub nodes: Vec<DiagramNode>,
+    #[serde(default)]
+    pub edges: Vec<DiagramEdge>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuditReport {
     #[serde(default)]
     pub scan_id: Option<String>,
@@ -215,6 +249,8 @@ pub struct AuditReport {
     pub cves_checked: usize,
     pub source_origin: String,
     pub findings: Vec<VulnerabilityFinding>,
+    #[serde(default)]
+    pub diagram: Option<CodebaseDiagram>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -914,6 +950,7 @@ pub async fn run_gemini_argon_audit(
             cves_checked: cves.len(),
             source_origin: snapshot.source_origin.clone(),
             findings: vec![],
+            diagram: None,
         };
     }
 
@@ -1069,6 +1106,7 @@ async fn call_gemini_argon_api(
                 cves_checked: cves.len(),
                 source_origin: snapshot.source_origin.clone(),
                 findings: parsed.findings,
+                diagram: None,
             });
         }
     }
@@ -1281,7 +1319,254 @@ fn synthesize_live_repo_audit(
         cves_checked: cves.len(),
         source_origin: snapshot.source_origin.clone(),
         findings,
+        diagram: None,
     }
+}
+
+// ============================================================================
+// 5B. GEMINI 4 ARGON COMPONENT FLOW DIAGRAM GENERATOR
+// ============================================================================
+
+pub async fn generate_codebase_diagram(
+    client: &Client,
+    config: &AppConfig,
+    snapshot: &RepoSnapshot,
+) -> CodebaseDiagram {
+    if let Some(api_key) = &config.gemini_api_key {
+        if let Some(live_diag) = call_gemini_diagram_api(client, config, api_key, snapshot).await {
+            if !live_diag.nodes.is_empty() {
+                return live_diag;
+            }
+        }
+    }
+    build_fallback_diagram_from_snapshot(snapshot)
+}
+
+async fn call_gemini_diagram_api(
+    client: &Client,
+    config: &AppConfig,
+    api_key: &str,
+    snapshot: &RepoSnapshot,
+) -> Option<CodebaseDiagram> {
+    let mut repo_context = String::with_capacity(snapshot.total_bytes_loaded.min(400_000) + 4096);
+    for file in &snapshot.files {
+        repo_context.push_str(&format!("\n--- FILE: {} ---\n", file.path));
+        let snippet: String = file.content.chars().take(12_000).collect();
+        repo_context.push_str(&snippet);
+    }
+
+    let prompt = format!(
+        "You are Buzz, an expert software architect powered by Gemini 4 Argon.\n\
+         Analyze the repository `{repo}` ({file_count} files) loaded in your 1M context window and generate a clear, high-signal Component Flow Diagram.\n\
+         Identify 4 to 6 major architectural components (`nodes`) and the directional data/control flows (`edges`) between them.\n\
+         Each node's `layer` MUST be one of: `FRONTEND`, `API`, `CORE`, or `DATA`.\n\
+         Each node's `files` array MUST list actual file paths from `{repo}` that belong to that component.\n\
+         Each edge MUST have `from` (source node `id`), `to` (target node `id`), and `label` (concise description of the request/data/event flowing along the arrow).\n\n\
+         Return strictly valid JSON matching this schema:\n\
+         {{\"architecture_summary\": \"string\", \
+         \"nodes\": [{{\"id\": \"comp_1\", \"label\": \"Component Name\", \"layer\": \"FRONTEND|API|CORE|DATA\", \"files\": [\"path/to/file\"], \"description\": \"1-sentence role in the system\"}}], \
+         \"edges\": [{{\"from\": \"comp_1\", \"to\": \"comp_2\", \"label\": \"HTMX POST / JSON / SQL / Auth flow\"}}]}}\n\n\
+         === REPOSITORY FILES ({repo}) ===\n{context}",
+        repo = snapshot.full_name,
+        file_count = snapshot.files.len(),
+        context = repo_context
+    );
+
+    let candidate_models = [
+        config.gemini_model.as_str(),
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
+    ];
+
+    let payload = serde_json::json!({
+        "contents": [{ "parts": [{ "text": prompt }] }],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json"
+        }
+    });
+
+    for model_id in candidate_models {
+        let url = format!(
+            "{}/models/{}:generateContent?key={}",
+            config.gemini_api_base.trim_end_matches('/'),
+            model_id,
+            api_key
+        );
+
+        let Ok(resp) = client
+            .post(&url)
+            .header("x-goog-api-key", api_key)
+            .json(&payload)
+            .send()
+            .await
+        else {
+            continue;
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let Ok(body) = resp.json::<serde_json::Value>().await else {
+            continue;
+        };
+        let Some(raw_text) = body
+            .pointer("/candidates/0/content/parts/0/text")
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        let cleaned = strip_markdown_fences(raw_text);
+        if let Ok(parsed) = serde_json::from_str::<CodebaseDiagram>(cleaned) {
+            if !parsed.nodes.is_empty() {
+                return Some(parsed);
+            }
+        }
+    }
+
+    None
+}
+
+fn build_fallback_diagram_from_snapshot(snapshot: &RepoSnapshot) -> CodebaseDiagram {
+    let mut frontend_files = Vec::new();
+    let mut api_files = Vec::new();
+    let mut core_files = Vec::new();
+    let mut data_files = Vec::new();
+
+    for f in &snapshot.files {
+        let p = f.path.to_ascii_lowercase();
+        if p.starts_with("public/")
+            || p.starts_with("web/")
+            || p.starts_with("client/")
+            || p.ends_with(".html")
+            || p.ends_with(".css")
+            || p.ends_with(".tsx")
+            || p.ends_with(".jsx")
+        {
+            frontend_files.push(f.path.clone());
+        } else if p.starts_with("api/")
+            || p.contains("route")
+            || p.contains("controller")
+            || p.contains("handler")
+        {
+            api_files.push(f.path.clone());
+        } else if p.starts_with("supabase/")
+            || p.ends_with(".sql")
+            || p.contains("schema")
+            || p.contains("db")
+            || p.contains("model")
+        {
+            data_files.push(f.path.clone());
+        } else {
+            core_files.push(f.path.clone());
+        }
+    }
+
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    if !frontend_files.is_empty() {
+        nodes.push(DiagramNode {
+            id: "ui_layer".to_string(),
+            label: "Client UI & Interaction Layer".to_string(),
+            layer: "FRONTEND".to_string(),
+            files: frontend_files.into_iter().take(5).collect(),
+            description: "Renders the user interface, manages auth session state, and dispatches requests to backend endpoints.".to_string(),
+        });
+    }
+
+    if !api_files.is_empty() {
+        nodes.push(DiagramNode {
+            id: "api_layer".to_string(),
+            label: "Serverless API & Route Handlers".to_string(),
+            layer: "API".to_string(),
+            files: api_files.into_iter().take(6).collect(),
+            description: "Validates incoming requests, enforces auth headers, and orchestrates core application workflows.".to_string(),
+        });
+    }
+
+    nodes.push(DiagramNode {
+        id: "core_engine".to_string(),
+        label: "Core Domain & Analysis Engine".to_string(),
+        layer: "CORE".to_string(),
+        files: if core_files.is_empty() {
+            snapshot.files.iter().take(4).map(|f| f.path.clone()).collect()
+        } else {
+            core_files.into_iter().take(6).collect()
+        },
+        description: format!(
+            "Core business logic, external API integrations, and processing pipeline for `{}`.",
+            snapshot.full_name
+        ),
+    });
+
+    if !data_files.is_empty() {
+        nodes.push(DiagramNode {
+            id: "data_layer".to_string(),
+            label: "Persistence & External Datastores".to_string(),
+            layer: "DATA".to_string(),
+            files: data_files.into_iter().take(5).collect(),
+            description: "Database schema, persisted records, and external data integrations.".to_string(),
+        });
+    }
+
+    // Connect nodes sequentially with meaningful flow labels
+    for window in nodes.windows(2) {
+        let from = &window[0];
+        let to = &window[1];
+        let label = match (from.layer.as_str(), to.layer.as_str()) {
+            ("FRONTEND", "API") => "HTTP / HTMX Requests + Auth Headers",
+            ("FRONTEND", "CORE") => "Client Events & Invocations",
+            ("API", "CORE") => "Validated Commands & Context Payload",
+            ("CORE", "DATA") => "SQL / REST Persistence & Queries",
+            _ => "Component Data & Control Flow",
+        };
+        edges.push(DiagramEdge {
+            from: from.id.clone(),
+            to: to.id.clone(),
+            label: label.to_string(),
+        });
+    }
+
+    CodebaseDiagram {
+        architecture_summary: format!(
+            "Component flow architecture of `{}` across {} inspected files, tracing request ingress from entrypoints through core domain logic and persistence.",
+            snapshot.full_name,
+            snapshot.files.len()
+        ),
+        nodes,
+        edges,
+    }
+}
+
+pub async fn save_diagram_to_scan(
+    client: &Client,
+    config: &AppConfig,
+    scan_id: &str,
+    diagram: &CodebaseDiagram,
+) {
+    let trimmed = scan_id.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
+        return;
+    };
+    let url = format!(
+        "{}/rest/v1/scans?id=eq.{}",
+        base_url.trim_end_matches('/'),
+        urlencoding_simple(trimmed)
+    );
+    let payload = serde_json::json!({
+        "diagram_json": diagram
+    });
+    let _ = client
+        .patch(&url)
+        .header("apikey", api_key)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&payload)
+        .send()
+        .await;
 }
 
 // ============================================================================
@@ -1320,7 +1605,8 @@ pub async fn persist_scan_report(
         "total_bytes_loaded": report.total_bytes_loaded,
         "estimated_tokens": report.estimated_tokens,
         "inspected_file_paths": report.inspected_file_paths,
-        "cves_checked": report.cves_checked
+        "cves_checked": report.cves_checked,
+        "diagram_json": report.diagram
     });
 
     if let Ok(resp) = client
@@ -1579,6 +1865,11 @@ pub async fn fetch_saved_scan_by_id(
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize;
 
+    let diagram: Option<CodebaseDiagram> = scan
+        .get("diagram_json")
+        .filter(|v| !v.is_null())
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
     Some(AuditReport {
         scan_id: Some(clean_id),
         repo_full_name: scan
@@ -1629,6 +1920,7 @@ pub async fn fetch_saved_scan_by_id(
             .unwrap_or(0) as usize,
         source_origin: "Saved Supabase Audit Record".to_string(),
         findings,
+        diagram,
     })
 }
 
@@ -2475,9 +2767,115 @@ async fn synthesize_patched_file(
 
 pub mod templates {
     use super::{
-        compute_patch_signature, AppConfig, AuditReport, CveRecord, GitHubRepoItem,
-        PullRequestOutcome, SavedScanSummary,
+        compute_patch_signature, AppConfig, AuditReport, CodebaseDiagram, CveRecord,
+        GitHubRepoItem, PullRequestOutcome, SavedScanSummary,
     };
+
+    pub fn render_component_diagram(repo_full_name: &str, diagram: &CodebaseDiagram) -> String {
+        let mut flow_chain_html = String::new();
+
+        // Map node IDs to labels & layers for edge lookup
+        for (idx, node) in diagram.nodes.iter().enumerate() {
+            let layer_upper = node.layer.to_uppercase();
+            let layer_class = match layer_upper.as_str() {
+                "FRONTEND" | "UI" | "CLIENT" => "layer-frontend",
+                "API" | "ROUTE" | "ROUTES" => "layer-api",
+                "DATA" | "DB" | "DATABASE" => "layer-data",
+                _ => "layer-core",
+            };
+
+            let mut file_pills = String::new();
+            for fp in node.files.iter().take(6) {
+                file_pills.push_str(&format!(
+                    r#"<span class="diag-file-pill">{f}</span>"#,
+                    f = escape_html(fp)
+                ));
+            }
+
+            // Find outgoing edges from this node (or sequential arrow to next component)
+            let outgoing: Vec<String> = diagram
+                .edges
+                .iter()
+                .filter(|e| e.from == node.id)
+                .map(|e| {
+                    let target_label = diagram
+                        .nodes
+                        .iter()
+                        .find(|n| n.id == e.to)
+                        .map(|n| n.label.as_str())
+                        .unwrap_or(e.to.as_str());
+                    if e.label.trim().is_empty() {
+                        format!("Flows to {}", target_label)
+                    } else {
+                        format!("{} ➔ {}", e.label, target_label)
+                    }
+                })
+                .collect();
+
+            let edge_caption = if !outgoing.is_empty() {
+                outgoing.join("  •  ")
+            } else if let Some(next_node) = diagram.nodes.get(idx + 1) {
+                format!("Component Flow ➔ {}", next_node.label)
+            } else {
+                String::new()
+            };
+
+            flow_chain_html.push_str(&format!(
+                r#"<div class="diag-node-card {layer_class}">
+                    <div class="diag-node-header">
+                        <span class="diag-layer-badge {layer_class}">{layer}</span>
+                        <span class="diag-node-title">{label}</span>
+                    </div>
+                    <p class="diag-node-desc">{desc}</p>
+                    <div class="diag-files-row">{files}</div>
+                </div>"#,
+                layer_class = layer_class,
+                layer = escape_html(&layer_upper),
+                label = escape_html(&node.label),
+                desc = escape_html(&node.description),
+                files = file_pills
+            ));
+
+            if idx + 1 < diagram.nodes.len() || !outgoing.is_empty() {
+                if !edge_caption.is_empty() {
+                    flow_chain_html.push_str(&format!(
+                        r##"<div class="diag-arrow-connector">
+                            <div class="diag-arrow-label">{caption}</div>
+                            <svg class="diag-arrow-svg" viewBox="0 0 24 32" shape-rendering="crispEdges" aria-hidden="true">
+                                <rect x="11" y="0" width="2" height="22" fill="#48D1FF" />
+                                <rect x="7" y="18" width="10" height="2" fill="#FFE047" />
+                                <rect x="9" y="20" width="6" height="2" fill="#FFE047" />
+                                <rect x="10" y="22" width="4" height="2" fill="#FFA800" />
+                                <rect x="11" y="24" width="2" height="2" fill="#FFA800" />
+                            </svg>
+                        </div>"##,
+                        caption = escape_html(&edge_caption)
+                    ));
+                }
+            }
+        }
+
+        format!(
+            r#"<div class="pixel-box diagram-section-card" style="margin-bottom:20px;border-color:var(--buzz-cyan);">
+                <div class="report-Banner-top" style="margin-bottom:14px;padding-bottom:12px;">
+                    <div>
+                        <div class="report-repo-title" style="color:var(--buzz-cyan);">
+                            🎨 COMPONENT FLOW ARCHITECTURE // {repo}
+                        </div>
+                        <p style="font-family:var(--font-code);font-size:0.84rem;color:var(--text-muted);margin-top:4px;">
+                            {summary}
+                        </p>
+                    </div>
+                </div>
+                <div class="diag-flow-pipeline">
+                    {flow_chain_html}
+                </div>
+            </div>"#,
+            repo = escape_html(repo_full_name),
+            summary = escape_html(&diagram.architecture_summary),
+            flow_chain_html = flow_chain_html
+        )
+    }
 
     pub fn render_saved_scans_list(scans: &[SavedScanSummary]) -> String {
         if scans.is_empty() {
@@ -2512,6 +2910,14 @@ pub mod templates {
                             onclick="window.buzzLoadSavedScan('{scan_id}')"
                         >
                             VIEW
+                        </button>
+                        <button
+                            type="button"
+                            class="pixel-btn pixel-btn-sm"
+                            style="border-color:var(--buzz-cyan);color:var(--buzz-cyan);"
+                            onclick="window.buzzGenerateDiagramForAudit('{scan_id}', '{repo}')"
+                        >
+                            🎨 DIAGRAM
                         </button>
                         <button
                             type="button"
@@ -2822,6 +3228,16 @@ pub mod templates {
         };
 
         let scan_id_attr = escape_html(report.scan_id.as_deref().unwrap_or(""));
+        let diagram_html = if let Some(diag) = &report.diagram {
+            render_component_diagram(&report.repo_full_name, diag)
+        } else {
+            String::new()
+        };
+        let diagram_btn_label = if report.diagram.is_some() {
+            "🎨 REGENERATE DIAGRAM"
+        } else {
+            "🎨 CREATE CODEBASE DIAGRAM"
+        };
 
         format!(
             r#"<div class="pixel-box-gold report-header-card" data-scan-id="{scan_id}" data-repo="{repo}">
@@ -2837,6 +3253,14 @@ pub mod templates {
                             <span class="meta-tag">FINDINGS: {hits}</span>
                         </div>
                         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+                            <button
+                                type="button"
+                                class="pixel-btn pixel-btn-sm"
+                                style="border-color:var(--buzz-cyan);color:var(--buzz-cyan);"
+                                onclick="window.buzzGenerateDiagramForAudit('{scan_id}', '{repo}')"
+                            >
+                                {diagram_btn_label}
+                            </button>
                             <button
                                 type="button"
                                 class="pixel-btn pixel-btn-sm"
@@ -2893,11 +3317,17 @@ pub mod templates {
                 </details>
             </div>
 
+            <div id="diagram-section-slot">
+                {diagram_html}
+            </div>
+
             <div class="findings-grid">
                 {findings_html}
             </div>"#,
             scan_id = scan_id_attr,
             repo = escape_html(&report.repo_full_name),
+            diagram_btn_label = diagram_btn_label,
+            diagram_html = diagram_html,
             branch = escape_html(&report.default_branch),
             sha = escape_html(&report.commit_sha),
             model = escape_html(&report.model_used),

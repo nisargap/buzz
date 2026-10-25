@@ -36,6 +36,11 @@ path = "api/apply_patch.rs"
 name = "scans"
 path = "api/scans.rs"
 
+[[bin]]
+name = "diagram"
+path = "api/diagram.rs"
+
+
 
 [dependencies]
 vercel_runtime = "1"

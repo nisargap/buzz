@@ -1600,10 +1600,443 @@ pub async fn save_diagram_to_scan(
     let _ = client
         .patch(&url)
         .header("apikey", api_key)
+        .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .json(&payload)
         .send()
         .await;
+}
+
+// ============================================================================
+// 5C. TALK TO BUZZ — CODEBASE & AUDIT REPORT Q&A + AGENT ACTIONS
+// ============================================================================
+
+#[derive(Deserialize)]
+struct GeminiChatJsonOutput {
+    reply: String,
+    #[serde(default)]
+    ask_confirm_reaudit: bool,
+    #[serde(default)]
+    suggest_pr_cve_ids: Vec<String>,
+    #[serde(default)]
+    execute_pr_now_cve_id: Option<String>,
+}
+
+pub async fn run_buzz_codebase_chat_html(
+    client: &Client,
+    config: &AppConfig,
+    repo_full_name: &str,
+    scan_id: Option<&str>,
+    report_context: &str,
+    question: &str,
+    github_token: Option<&str>,
+) -> String {
+    let clean_repo = repo_full_name.trim();
+    let trimmed_q = question.trim();
+    if trimmed_q.is_empty() {
+        return templates::render_chat_turn(
+            question,
+            "Ask me any question about this repository's vulnerabilities, architecture, or tell me to create a Pull Request for any finding!",
+            "",
+        );
+    }
+
+    // 1. Load the existing AuditReport from Supabase or from the client's report_context
+    //    (NEVER silently re-audit the repository during chat!)
+    let mut loaded_report: Option<AuditReport> = None;
+    if let Some(sid) = scan_id.filter(|s| !s.trim().is_empty()) {
+        loaded_report = fetch_saved_scan_by_id(client, config, sid).await;
+    }
+    if loaded_report.is_none() && !report_context.trim().is_empty() {
+        if let Ok(parsed_val) = serde_json::from_str::<serde_json::Value>(report_context) {
+            let findings: Vec<VulnerabilityFinding> = parsed_val
+                .get("findings")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let branch = parsed_val
+                .get("default_branch")
+                .and_then(|v| v.as_str())
+                .unwrap_or("main")
+                .to_string();
+            let summary = parsed_val
+                .get("executive_summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let grade = parsed_val
+                .get("grade")
+                .and_then(|v| v.as_str())
+                .unwrap_or("A")
+                .to_string();
+            let risk = parsed_val
+                .get("risk_score")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let paths: Vec<String> = parsed_val
+                .get("inspected_file_paths")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let diagram: Option<CodebaseDiagram> = parsed_val
+                .get("diagram")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            loaded_report = Some(AuditReport {
+                scan_id: scan_id.map(|s| s.to_string()),
+                repo_full_name: clean_repo.to_string(),
+                default_branch: branch,
+                commit_sha: "HEAD".to_string(),
+                model_used: config.gemini_model.clone(),
+                risk_score: risk,
+                grade,
+                executive_summary: summary,
+                files_inspected: paths.len(),
+                total_tree_files: paths.len(),
+                total_bytes_loaded: 0,
+                estimated_tokens: 0,
+                raw_tokens_before_compact: 0,
+                auto_compacted: false,
+                compaction_saved_tokens: 0,
+                inspected_file_paths: paths,
+                cves_checked: 1220,
+                source_origin: "Cached Audit Context".to_string(),
+                findings,
+                diagram,
+            });
+        }
+    }
+
+    let report_json_for_prompt = if let Some(rep) = &loaded_report {
+        serde_json::to_string_pretty(rep).unwrap_or_else(|_| report_context.to_string())
+    } else {
+        report_context.to_string()
+    };
+
+    let q_lower = trimmed_q.to_ascii_lowercase();
+    let user_asked_reaudit = q_lower.contains("re-audit")
+        || q_lower.contains("reaudit")
+        || q_lower.contains("rescan")
+        || q_lower.contains("re-scan")
+        || q_lower.contains("audit again")
+        || q_lower.contains("scan again");
+
+    let user_explicitly_requested_pr = (q_lower.contains("create a pr")
+        || q_lower.contains("open a pr")
+        || q_lower.contains("put up a pr")
+        || q_lower.contains("make a pr")
+        || q_lower.contains("create pr")
+        || q_lower.contains("open pr")
+        || q_lower.contains("create pull request")
+        || q_lower.contains("open pull request")
+        || q_lower.contains("apply patch"))
+        && !q_lower.contains("can you")
+        && !q_lower.contains("how do");
+
+    // 2. Call Gemini 4 Argon for structured chat response + action proposals
+    let mut reply_text = String::new();
+    let mut ask_confirm_reaudit = user_asked_reaudit;
+    let mut suggest_pr_cve_ids: Vec<String> = Vec::new();
+    let mut execute_pr_now_cve_id: Option<String> = None;
+
+    if let Some(api_key) = &config.gemini_api_key {
+        let prompt = format!(
+            "You are Buzz, an interactive security auditor and codebase assistant powered by Gemini 4 Argon.\n\
+             You are chatting with a developer about their GitHub repository `{repo}` using the existing Audit Report context below.\n\n\
+             IMPORTANT BEHAVIOR RULES:\n\
+             1. NEVER re-audit automatically. If the user asks to re-audit, rescan, or check new commits, set `\"ask_confirm_reaudit\": true` and politely ask them in `\"reply\"` to confirm running a re-audit using the confirmation button below.\n\
+             2. You can suggest creating GitHub Pull Requests for findings in the report! Whenever you discuss specific vulnerabilities or fixes, list their `cve_id`s in `\"suggest_pr_cve_ids\"` so the UI displays 1-click Create PR buttons.\n\
+             3. If the user explicitly commands you to create/open/put up a PR right now (e.g. 'Create a PR for CWE-284' or 'Open a PR for the top vulnerability'), set `\"execute_pr_now_cve_id\"` to that finding's `cve_id` (and explain in `\"reply\"` that you are opening the Pull Request now).\n\n\
+             Return strictly valid JSON matching this schema:\n\
+             {{\"reply\": \"Clear, helpful answer referencing exact files, lines, and CVEs\", \
+             \"ask_confirm_reaudit\": false, \
+             \"suggest_pr_cve_ids\": [\"CVE-or-CWE-ID\"], \
+             \"execute_pr_now_cve_id\": null}}\n\n\
+             === EXISTING AUDIT REPORT CONTEXT ({repo}) ===\n{report_ctx}\n\n\
+             === USER MESSAGE ===\n{q}",
+            repo = clean_repo,
+            report_ctx = report_json_for_prompt,
+            q = trimmed_q
+        );
+
+        let candidate_models = [
+            config.gemini_model.as_str(),
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+        ];
+
+        let payload = serde_json::json!({
+            "contents": [{ "parts": [{ "text": prompt }] }],
+            "generationConfig": {
+                "temperature": 0.2,
+                "responseMimeType": "application/json"
+            }
+        });
+
+        for model_id in candidate_models {
+            let url = format!(
+                "{}/models/{}:generateContent?key={}",
+                config.gemini_api_base.trim_end_matches('/'),
+                model_id,
+                api_key
+            );
+            if let Ok(resp) = client
+                .post(&url)
+                .header("x-goog-api-key", api_key)
+                .json(&payload)
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    if let Ok(body) = resp.json::<serde_json::Value>().await {
+                        if let Some(raw_text) = body
+                            .pointer("/candidates/0/content/parts/0/text")
+                            .and_then(|v| v.as_str())
+                        {
+                            let cleaned = strip_markdown_fences(raw_text);
+                            if let Ok(parsed) = serde_json::from_str::<GeminiChatJsonOutput>(cleaned)
+                            {
+                                reply_text = parsed.reply;
+                                ask_confirm_reaudit =
+                                    ask_confirm_reaudit || parsed.ask_confirm_reaudit;
+                                suggest_pr_cve_ids = parsed.suggest_pr_cve_ids;
+                                execute_pr_now_cve_id = parsed.execute_pr_now_cve_id.filter(|s| {
+                                    !s.trim().is_empty() && s.trim() != "null"
+                                });
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback reply & intent detection if Gemini JSON was not returned
+    if reply_text.trim().is_empty() {
+        if ask_confirm_reaudit {
+            reply_text = format!(
+                "I haven't run a re-audit yet—re-auditing will fetch the latest commits from `{}` and load the full repository tree into the 1M context window. Would you like me to start a fresh re-audit now?",
+                clean_repo
+            );
+        } else if let Some(rep) = &loaded_report {
+            reply_text = format!(
+                "{}\n\nI can also open a Pull Request for any of the {} findings in `{}`—click a Create PR action below or tell me which CVE/CWE to patch!",
+                rep.executive_summary,
+                rep.findings.len(),
+                clean_repo
+            );
+            for f in rep.findings.iter().filter(|f| !f.patch_created).take(2) {
+                suggest_pr_cve_ids.push(f.cve_id.clone());
+            }
+        } else {
+            reply_text = format!(
+                "I have the report context for `{}` ready. Let me know which vulnerability or file you'd like to inspect or patch!",
+                clean_repo
+            );
+        }
+    }
+
+    // If user explicitly asked to execute a PR in chat and Gemini didn't pick a specific ID yet, match from findings
+    if execute_pr_now_cve_id.is_none() && user_explicitly_requested_pr {
+        if let Some(rep) = &loaded_report {
+            if let Some(matched) = rep
+                .findings
+                .iter()
+                .find(|f| q_lower.contains(&f.cve_id.to_ascii_lowercase()))
+                .or_else(|| rep.findings.iter().find(|f| !f.patch_created))
+                .or_else(|| rep.findings.first())
+            {
+                execute_pr_now_cve_id = Some(matched.cve_id.clone());
+            }
+        }
+    }
+
+    // If discussing vulnerabilities and suggest_pr_cve_ids is empty, suggest up to 2 unpatched findings mentioned in reply
+    if suggest_pr_cve_ids.is_empty() && execute_pr_now_cve_id.is_none() {
+        if let Some(rep) = &loaded_report {
+            for f in &rep.findings {
+                if !f.patch_created
+                    && (reply_text.contains(&f.cve_id) || reply_text.contains(&f.file_path))
+                {
+                    suggest_pr_cve_ids.push(f.cve_id.clone());
+                }
+            }
+            if suggest_pr_cve_ids.is_empty()
+                && (q_lower.contains("pr")
+                    || q_lower.contains("fix")
+                    || q_lower.contains("patch")
+                    || q_lower.contains("vulnerab"))
+            {
+                for f in rep.findings.iter().filter(|f| !f.patch_created).take(2) {
+                    suggest_pr_cve_ids.push(f.cve_id.clone());
+                }
+            }
+        }
+    }
+
+    // 3. Build interactive action cards HTML (Re-Audit confirmation, Executed PR result, or Suggested PR buttons)
+    let mut actions_html = String::new();
+
+    // Action A: Ask confirmation before re-auditing
+    if ask_confirm_reaudit {
+        actions_html.push_str(&format!(
+            r#"<div class="chat-action-box" style="margin-top:12px;padding:12px;background:#070d20;border:2px solid var(--buzz-yellow);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                <span style="font-size:0.82rem;color:var(--buzz-yellow);">
+                    ⚠ Confirm before running a fresh 1M-context re-audit of <strong>{repo}</strong>:
+                </span>
+                <button
+                    type="button"
+                    class="pixel-btn pixel-btn-sm"
+                    style="background:var(--buzz-yellow);color:#090d1c;font-weight:700;"
+                    onclick="window.buzzReauditRepo('{repo}')"
+                >
+                    ↻ CONFIRM &amp; RE-AUDIT {repo}
+                </button>
+            </div>"#,
+            repo = templates::escape_html(clean_repo)
+        ));
+    }
+
+    // Action B: Execute Create PR directly if requested by the user
+    if let (Some(exec_cve), Some(rep)) = (&execute_pr_now_cve_id, &loaded_report) {
+        if let Some(finding) = rep
+            .findings
+            .iter()
+            .find(|f| f.cve_id.eq_ignore_ascii_case(exec_cve))
+            .or_else(|| rep.findings.first())
+        {
+            let patch_token = compute_patch_signature(
+                config,
+                &rep.repo_full_name,
+                &rep.default_branch,
+                &finding.file_path,
+                &finding.cve_id,
+            )
+            .unwrap_or_default();
+
+            let patch_req = PatchRequest {
+                finding_id: finding.id.clone().unwrap_or_default(),
+                repo: rep.repo_full_name.clone(),
+                branch: rep.default_branch.clone(),
+                cve_id: finding.cve_id.clone(),
+                title: finding.title.clone(),
+                file_path: finding.file_path.clone(),
+                line_reference: finding.line_reference.clone(),
+                remediation_patch: finding.remediation_patch.clone(),
+                patch_token,
+            };
+
+            let outcome =
+                create_remediation_pull_request(client, config, &patch_req, github_token).await;
+            let outcome_html = templates::render_pr_outcome(&outcome);
+            actions_html.push_str(&format!(
+                r#"<div class="chat-action-box" style="margin-top:12px;padding:12px;background:#061512;border:2px solid var(--buzz-green);">
+                    <div style="font-family:var(--font-display);font-size:0.62rem;color:var(--buzz-green);margin-bottom:8px;">
+                        ⚡ EXECUTED PR ACTION FOR {cve} ({file})
+                    </div>
+                    {outcome_html}
+                </div>"#,
+                cve = templates::escape_html(&finding.cve_id),
+                file = templates::escape_html(&finding.file_path),
+                outcome_html = outcome_html
+            ));
+        }
+    } else if let Some(rep) = &loaded_report {
+        // Action C: Render Suggested 1-Click Create PR Cards inside the chat response
+        let mut suggested_cards = String::new();
+        for (s_idx, cve_id) in suggest_pr_cve_ids.iter().take(3).enumerate() {
+            if let Some(f) = rep
+                .findings
+                .iter()
+                .find(|f| f.cve_id.eq_ignore_ascii_case(cve_id))
+            {
+                let finding_id = templates::escape_html(f.id.as_deref().unwrap_or(""));
+                let patch_token = compute_patch_signature(
+                    config,
+                    &rep.repo_full_name,
+                    &rep.default_branch,
+                    &f.file_path,
+                    &f.cve_id,
+                )
+                .unwrap_or_default();
+                let unique_slot = format!(
+                    "chat-pr-slot-{}-{}",
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_millis() % 100_000)
+                        .unwrap_or(1),
+                    s_idx
+                );
+
+                let action_inner = if f.patch_created {
+                    let url = templates::escape_html(f.pr_url.as_deref().unwrap_or("#"));
+                    let num = f.pr_number.unwrap_or(1);
+                    format!(
+                        r#"<a href="{url}" target="_blank" rel="noopener noreferrer" class="pixel-btn pixel-btn-pr-link">↗ VIEW EXISTING PR #{num}</a>"#,
+                        url = url,
+                        num = num
+                    )
+                } else {
+                    format!(
+                        r#"<form style="margin:0;display:inline-block;">
+                            <input type="hidden" name="finding_id" value="{finding_id}" />
+                            <input type="hidden" name="repo" value="{repo}" />
+                            <input type="hidden" name="branch" value="{branch}" />
+                            <input type="hidden" name="cve_id" value="{cve}" />
+                            <input type="hidden" name="title" value="{title}" />
+                            <input type="hidden" name="file_path" value="{file}" />
+                            <input type="hidden" name="line_reference" value="{line}" />
+                            <input type="hidden" name="remediation_patch" value="{patch}" />
+                            <input type="hidden" name="patch_token" value="{patch_token}" />
+                            <button type="button" class="pixel-btn pixel-btn-apply" onclick="return window.buzzApplyPatch(this, event);">
+                                ⚡ CREATE PR FOR {cve}
+                            </button>
+                        </form>"#,
+                        finding_id = finding_id,
+                        repo = templates::escape_html(&rep.repo_full_name),
+                        branch = templates::escape_html(&rep.default_branch),
+                        cve = templates::escape_html(&f.cve_id),
+                        title = templates::escape_html(&f.title),
+                        file = templates::escape_html(&f.file_path),
+                        line = templates::escape_html(&f.line_reference),
+                        patch = templates::escape_html(&f.remediation_patch),
+                        patch_token = templates::escape_html(&patch_token)
+                    )
+                };
+
+                suggested_cards.push_str(&format!(
+                    r#"<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:10px 12px;background:#070d20;border:2px solid var(--border-blue);">
+                        <div style="font-size:0.82rem;">
+                            <strong style="color:var(--buzz-yellow);">{cve}</strong>
+                            <span style="color:var(--text-muted);"> in `{file}` ({line})</span>
+                        </div>
+                        <div id="{slot}">
+                            {action_inner}
+                        </div>
+                    </div>"#,
+                    cve = templates::escape_html(&f.cve_id),
+                    file = templates::escape_html(&f.file_path),
+                    line = templates::escape_html(&f.line_reference),
+                    slot = unique_slot,
+                    action_inner = action_inner
+                ));
+            }
+        }
+
+        if !suggested_cards.is_empty() {
+            actions_html.push_str(&format!(
+                r#"<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+                    <div style="font-family:var(--font-display);font-size:0.6rem;color:var(--buzz-green);">
+                        💡 SUGGESTED PULL REQUEST ACTIONS:
+                    </div>
+                    {suggested_cards}
+                </div>"#,
+                suggested_cards = suggested_cards
+            ));
+        }
+    }
+
+    templates::render_chat_turn(trimmed_q, &reply_text, &actions_html)
 }
 
 // ============================================================================
@@ -2809,210 +3242,216 @@ pub mod templates {
     };
 
     pub fn render_component_diagram(repo_full_name: &str, diagram: &CodebaseDiagram) -> String {
-        let mut effective_edges = diagram.edges.clone();
-        if effective_edges.is_empty() && diagram.nodes.len() >= 2 {
-            for (idx, win) in diagram.nodes.windows(2).enumerate() {
-                effective_edges.push(super::DiagramEdge {
-                    from: win[0].id.clone(),
-                    to: win[1].id.clone(),
-                    label: "State Transition".to_string(),
-                    importance: if idx <= 1 {
-                        "primary".to_string()
+        const NODES_PER_ROW: usize = 3;
+        let mut snake_rows_html = String::new();
+        let mut initial_detail_html = String::new();
+
+        for (row_idx, chunk) in diagram.nodes.chunks(NODES_PER_ROW).enumerate() {
+            let is_reverse_row = row_idx % 2 == 1;
+            let row_class = if is_reverse_row {
+                "mermaid-snake-row reverse-row"
+            } else {
+                "mermaid-snake-row"
+            };
+
+            let mut row_inner_html = String::new();
+
+            for (col_idx, node) in chunk.iter().enumerate() {
+                let global_idx = row_idx * NODES_PER_ROW + col_idx;
+                let layer_upper = node.layer.to_uppercase();
+                let is_primary = if !node.importance.trim().is_empty() {
+                    node.importance.trim().eq_ignore_ascii_case("primary")
+                } else {
+                    global_idx < 3 || layer_upper != "DATA"
+                };
+                let tier_class = if is_primary {
+                    "primary-state"
+                } else {
+                    "secondary-state"
+                };
+                let selected_class = if global_idx == 0 {
+                    "selected-state"
+                } else {
+                    ""
+                };
+
+                let mut file_pills_html = String::new();
+                for fp in &node.files {
+                    let clean_fp = escape_html(fp);
+                    let gh_url = format!(
+                        "https://github.com/{}/blob/HEAD/{}",
+                        escape_html(repo_full_name),
+                        clean_fp
+                    );
+                    file_pills_html.push_str(&format!(
+                        r#"<a href="{url}" target="_blank" rel="noopener noreferrer" class="diag-file-pill">📄 {fp} ↗</a>"#,
+                        url = gh_url,
+                        fp = clean_fp
+                    ));
+                }
+
+                let detail_payload = format!(
+                    r#"<div class="sm-inspector-title">[{layer}] {title}</div>
+                    <p class="sm-inspector-desc">{desc}</p>
+                    <div class="diag-files-row">{files}</div>"#,
+                    layer = escape_html(&layer_upper),
+                    title = escape_html(&node.label),
+                    desc = escape_html(&node.description),
+                    files = file_pills_html
+                );
+
+                if global_idx == 0 {
+                    initial_detail_html = detail_payload.clone();
+                }
+
+                row_inner_html.push_str(&format!(
+                    r#"<div
+                        id="sm-node-{node_id}"
+                        class="mermaid-node-box sm-state-node {tier_class} {selected_class}"
+                        onclick="window.buzzSelectStateNode(this)"
+                    >
+                        <span class="mermaid-node-layer">{layer}</span>
+                        <div class="mermaid-node-title">{title}</div>
+                        <template class="sm-node-inspector-template">{detail_payload}</template>
+                    </div>"#,
+                    node_id = escape_html(&node.id),
+                    tier_class = tier_class,
+                    selected_class = selected_class,
+                    layer = escape_html(&layer_upper),
+                    title = escape_html(&node.label),
+                    detail_payload = detail_payload
+                ));
+
+                // Horizontal arrow to the next component within this same row
+                if let Some(next_in_row) = chunk.get(col_idx + 1) {
+                    let matching_edge = diagram
+                        .edges
+                        .iter()
+                        .find(|e| e.from == node.id && e.to == next_in_row.id)
+                        .or_else(|| diagram.edges.iter().find(|e| e.from == node.id));
+
+                    let raw_label = matching_edge
+                        .map(|e| e.label.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or("Dataflow");
+                    let short_label: String = raw_label.chars().take(16).collect();
+
+                    let edge_is_secondary = matching_edge
+                        .map(|e| e.importance.trim().eq_ignore_ascii_case("secondary"))
+                        .unwrap_or(!is_primary);
+                    let edge_class = if edge_is_secondary {
+                        "secondary-edge"
                     } else {
-                        "secondary".to_string()
-                    },
-                });
-            }
-        }
+                        "primary-edge"
+                    };
+                    let stroke_color = if edge_is_secondary {
+                        "#6882B8"
+                    } else {
+                        "#FFE047"
+                    };
+                    let dash_attr = if edge_is_secondary {
+                        r#"stroke-dasharray="4 4""#
+                    } else {
+                        ""
+                    };
 
-        let mut state_nodes_html = String::new();
-        let mut initial_inspector_html = String::new();
+                    // Point right (───►) on even rows, and point left (◄───) on odd reverse rows!
+                    let arrow_svg = if is_reverse_row {
+                        format!(
+                            r##"<svg class="mermaid-arrow-svg-lr" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true">
+                                <line x1="12" y1="8" x2="100" y2="8" stroke="{stroke}" stroke-width="2.5" {dash} />
+                                <polygon points="14,2 0,8 14,14" fill="{stroke}" />
+                            </svg>"##,
+                            stroke = stroke_color,
+                            dash = dash_attr
+                        )
+                    } else {
+                        format!(
+                            r##"<svg class="mermaid-arrow-svg-lr" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true">
+                                <line x1="0" y1="8" x2="88" y2="8" stroke="{stroke}" stroke-width="2.5" {dash} />
+                                <polygon points="86,2 100,8 86,14" fill="{stroke}" />
+                            </svg>"##,
+                            stroke = stroke_color,
+                            dash = dash_attr
+                        )
+                    };
 
-        for (idx, node) in diagram.nodes.iter().enumerate() {
-            let layer_upper = node.layer.to_uppercase();
-            let is_primary_node = if !node.importance.trim().is_empty() {
-                node.importance.trim().eq_ignore_ascii_case("primary")
-            } else {
-                idx < 3 || layer_upper == "FRONTEND" || layer_upper == "API" || layer_upper == "CORE"
-            };
-
-            let tier_class = if is_primary_node {
-                "primary-state"
-            } else {
-                "secondary-state"
-            };
-            let tier_pill_class = if is_primary_node {
-                "primary"
-            } else {
-                "secondary"
-            };
-            let tier_label = if is_primary_node {
-                "★ PRIMARY USER FLOW"
-            } else {
-                "┅ SECONDARY / SYSTEM PATH"
-            };
-            let selected_class = if idx == 0 { "selected-state" } else { "" };
-
-            // Collect outgoing and incoming transitions for this state node
-            let mut outgoing_edges_html = String::new();
-            let mut inspector_transitions_html = String::new();
-
-            for (e_idx, edge) in effective_edges.iter().enumerate() {
-                let edge_is_primary = if !edge.importance.trim().is_empty() {
-                    edge.importance.trim().eq_ignore_ascii_case("primary")
-                } else {
-                    e_idx < 2 || !edge.label.to_ascii_lowercase().contains("background")
-                };
-                let edge_tier_class = if edge_is_primary {
-                    "edge-primary"
-                } else {
-                    "edge-secondary"
-                };
-                let edge_badge = if edge_is_primary {
-                    "★ PRIMARY FLOW"
-                } else {
-                    "┅ SECONDARY PATH"
-                };
-                let arrow_glyph = if edge_is_primary { "═══►" } else { "───►" };
-
-                if edge.from == node.id {
-                    let target_label = diagram
-                        .nodes
-                        .iter()
-                        .find(|n| n.id == edge.to)
-                        .map(|n| n.label.as_str())
-                        .unwrap_or(edge.to.as_str());
-
-                    outgoing_edges_html.push_str(&format!(
-                        r#"<div class="sm-transition-edge {edge_tier}" data-flow-tier="{tier_key}" onclick="window.buzzJumpToStateNode('{to_id}')">
-                            <span>[{badge}]</span>
-                            <span>{label}</span>
-                            <span>{arrow}</span>
-                            <strong style="text-decoration:underline;">{target}</strong>
+                    row_inner_html.push_str(&format!(
+                        r#"<div class="mermaid-arrow-lr {edge_class}">
+                            <span class="mermaid-arrow-caption" title="{full_label}">{short_label}</span>
+                            {arrow_svg}
                         </div>"#,
-                        edge_tier = edge_tier_class,
-                        tier_key = if edge_is_primary { "primary" } else { "secondary" },
-                        to_id = escape_html(&edge.to),
-                        badge = edge_badge,
-                        label = escape_html(&edge.label),
-                        arrow = arrow_glyph,
-                        target = escape_html(target_label)
-                    ));
-
-                    inspector_transitions_html.push_str(&format!(
-                        r#"<div class="sm-transition-edge {edge_tier}" onclick="window.buzzJumpToStateNode('{to_id}')">
-                            <span>OUT {arrow} <strong>{target}</strong>: {label}</span>
-                        </div>"#,
-                        edge_tier = edge_tier_class,
-                        to_id = escape_html(&edge.to),
-                        arrow = arrow_glyph,
-                        target = escape_html(target_label),
-                        label = escape_html(&edge.label)
-                    ));
-                } else if edge.to == node.id {
-                    let source_label = diagram
-                        .nodes
-                        .iter()
-                        .find(|n| n.id == edge.from)
-                        .map(|n| n.label.as_str())
-                        .unwrap_or(edge.from.as_str());
-
-                    inspector_transitions_html.push_str(&format!(
-                        r#"<div class="sm-transition-edge {edge_tier}" onclick="window.buzzJumpToStateNode('{from_id}')">
-                            <span>IN ◄─── <strong>{source}</strong>: {label}</span>
-                        </div>"#,
-                        edge_tier = edge_tier_class,
-                        from_id = escape_html(&edge.from),
-                        source = escape_html(source_label),
-                        label = escape_html(&edge.label)
+                        edge_class = edge_class,
+                        full_label = escape_html(raw_label),
+                        short_label = escape_html(&short_label),
+                        arrow_svg = arrow_svg
                     ));
                 }
             }
 
-            if inspector_transitions_html.is_empty() {
-                inspector_transitions_html.push_str(
-                    r#"<div style="font-size:0.84rem;color:var(--text-dim);">Terminal / standalone state node</div>"#,
-                );
-            }
-
-            let mut file_pills_html = String::new();
-            for fp in &node.files {
-                let clean_fp = escape_html(fp);
-                let gh_url = format!(
-                    "https://github.com/{}/blob/HEAD/{}",
-                    escape_html(repo_full_name),
-                    clean_fp
-                );
-                file_pills_html.push_str(&format!(
-                    r#"<a href="{url}" target="_blank" rel="noopener noreferrer" class="diag-file-pill" onclick="event.stopPropagation();">📄 {fp} ↗</a>"#,
-                    url = gh_url,
-                    fp = clean_fp
-                ));
-            }
-
-            let inspector_payload = format!(
-                r#"<span class="sm-inspector-tag">STATE {step:02} // {layer} // {tier_label}</span>
-                <h4 class="sm-inspector-title">{title}</h4>
-                <p class="sm-inspector-desc">{desc}</p>
-                <span class="sm-inspector-section-label">STATE MACHINE TRANSITIONS (CLICK TO FOLLOW)</span>
-                <div class="sm-inspector-transitions">{transitions}</div>
-                <span class="sm-inspector-section-label">SOURCE FILES IN THIS STATE (CLICK TO OPEN ON GITHUB)</span>
-                <div class="diag-files-row">{files}</div>"#,
-                step = idx + 1,
-                layer = escape_html(&layer_upper),
-                tier_label = tier_label,
-                title = escape_html(&node.label),
-                desc = escape_html(&node.description),
-                transitions = inspector_transitions_html,
-                files = file_pills_html
-            );
-
-            if idx == 0 {
-                initial_inspector_html = inspector_payload.clone();
-            }
-
-            state_nodes_html.push_str(&format!(
-                r#"<div
-                    id="sm-node-{node_id}"
-                    class="sm-state-node {tier_class} {selected_class}"
-                    data-node-id="{node_id}"
-                    data-flow-tier="{tier_key}"
-                    onclick="window.buzzSelectStateNode(this)"
-                >
-                    <div class="sm-state-top">
-                        <div class="sm-state-badges">
-                            <span class="sm-state-step-pill">STATE {step:02} // {layer}</span>
-                            <span class="sm-flow-tier-pill {tier_pill_class}">{tier_label}</span>
-                        </div>
-                        <span class="sm-click-hint">▸ CLICK TO INSPECT</span>
-                    </div>
-                    <div class="sm-state-title">{title}</div>
-                    <p class="sm-state-summary">{desc}</p>
-                    <div class="diag-files-row">{files}</div>
-                    <template class="sm-node-inspector-template">{inspector_payload}</template>
-                </div>"#,
-                node_id = escape_html(&node.id),
-                tier_class = tier_class,
-                selected_class = selected_class,
-                tier_key = if is_primary_node { "primary" } else { "secondary" },
-                step = idx + 1,
-                layer = escape_html(&layer_upper),
-                tier_pill_class = tier_pill_class,
-                tier_label = tier_label,
-                title = escape_html(&node.label),
-                desc = escape_html(&node.description),
-                files = file_pills_html,
-                inspector_payload = inspector_payload
+            snake_rows_html.push_str(&format!(
+                r#"<div class="{row_class}">{row_inner_html}</div>"#,
+                row_class = row_class,
+                row_inner_html = row_inner_html
             ));
 
-            if !outgoing_edges_html.is_empty() {
-                state_nodes_html.push_str(&format!(
-                    r#"<div class="sm-transition-connector">
-                        <div class="sm-transition-branch-list">
-                            {outgoing_edges_html}
+            // If there is another row after this one, render the vertical snake wraparound U-turn connector!
+            let next_row_first_idx = (row_idx + 1) * NODES_PER_ROW;
+            if let (Some(last_node_in_row), Some(next_row_first_node)) =
+                (chunk.last(), diagram.nodes.get(next_row_first_idx))
+            {
+                let matching_edge = diagram
+                    .edges
+                    .iter()
+                    .find(|e| e.from == last_node_in_row.id && e.to == next_row_first_node.id)
+                    .or_else(|| diagram.edges.iter().find(|e| e.from == last_node_in_row.id));
+
+                let raw_label = matching_edge
+                    .map(|e| e.label.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("Next Stage");
+                let short_label: String = raw_label.chars().take(18).collect();
+
+                let edge_is_secondary = matching_edge
+                    .map(|e| e.importance.trim().eq_ignore_ascii_case("secondary"))
+                    .unwrap_or(false);
+                let edge_class = if edge_is_secondary {
+                    "secondary-edge"
+                } else {
+                    "primary-edge"
+                };
+                let stroke_color = if edge_is_secondary {
+                    "#6882B8"
+                } else {
+                    "#FFE047"
+                };
+                let dash_attr = if edge_is_secondary {
+                    r#"stroke-dasharray="4 4""#
+                } else {
+                    ""
+                };
+                let side_class = if is_reverse_row {
+                    "uturn-left"
+                } else {
+                    "uturn-right"
+                };
+
+                snake_rows_html.push_str(&format!(
+                    r##"<div class="mermaid-snake-uturn {side_class} {edge_class}">
+                        <div class="mermaid-uturn-inner">
+                            <span class="mermaid-arrow-caption" title="{full_label}" style="margin-bottom:0;">{short_label}</span>
+                            <svg class="mermaid-uturn-svg" viewBox="0 0 22 36" aria-hidden="true">
+                                <line x1="11" y1="0" x2="11" y2="26" stroke="{stroke}" stroke-width="2.5" {dash} />
+                                <polygon points="4,24 11,36 18,24" fill="{stroke}" />
+                            </svg>
                         </div>
-                    </div>"#,
-                    outgoing_edges_html = outgoing_edges_html
+                    </div>"##,
+                    side_class = side_class,
+                    edge_class = edge_class,
+                    full_label = escape_html(raw_label),
+                    short_label = escape_html(&short_label),
+                    stroke = stroke_color,
+                    dash = dash_attr
                 ));
             }
         }
@@ -3021,56 +3460,29 @@ pub mod templates {
             r#"<div class="sm-diagram-card">
                 <div class="report-Banner-top" style="margin-bottom:14px;padding-bottom:12px;">
                     <div>
-                        <div class="report-repo-title" style="color:var(--buzz-cyan);font-size:1.05rem;">
-                            🔀 INTERACTIVE STATE MACHINE &amp; USER-FLOW DIAGRAM // {repo}
+                        <div class="report-repo-title" style="color:var(--buzz-cyan);font-size:1.02rem;">
+                            🔀 SYSTEM DESIGN FLOW DIAGRAM // {repo}
                         </div>
-                        <p style="font-family:var(--font-code);font-size:0.92rem;color:var(--text-muted);margin-top:6px;line-height:1.5;">
-                            {summary}
+                        <p style="font-family:var(--font-code);font-size:0.88rem;color:var(--text-muted);margin-top:4px;">
+                            {summary} <span style="color:var(--buzz-yellow);">(Click any component box below to inspect its files)</span>
                         </p>
                     </div>
                 </div>
 
-                <!-- Legend & Interactive Flow Filter Toolbar -->
-                <div class="sm-toolbar">
-                    <div class="sm-legend-pills">
-                        <span class="sm-legend-item">
-                            <span class="sm-legend-line-primary"></span>
-                            <strong style="color:var(--buzz-yellow);">★ Primary User Flow (Critical Path)</strong>
-                        </span>
-                        <span class="sm-legend-item">
-                            <span class="sm-legend-line-secondary"></span>
-                            <span style="color:#9bb1e0;">┅ Secondary / Background Path</span>
-                        </span>
-                    </div>
-
-                    <div class="sm-filter-btns">
-                        <button type="button" class="sm-filter-btn active" onclick="window.buzzFilterDiagramFlows('all', this)">
-                            ALL FLOWS
-                        </button>
-                        <button type="button" class="sm-filter-btn" onclick="window.buzzFilterDiagramFlows('primary', this)">
-                            ★ PRIMARY USER FLOWS ONLY
-                        </button>
-                        <button type="button" class="sm-filter-btn" onclick="window.buzzFilterDiagramFlows('secondary', this)">
-                            ┅ SECONDARY PATHS
-                        </button>
-                    </div>
+                <!-- Snake-Wraparound Mermaid-Style Flowchart (Zero Horizontal Scroll) -->
+                <div class="mermaid-lr-stage">
+                    {snake_rows_html}
                 </div>
 
-                <!-- Interactive Split Workspace: State Machine (Left) + Clickable Element Inspector (Right) -->
-                <div class="sm-workspace">
-                    <div id="sm-flow-canvas" class="sm-flow-canvas">
-                        {state_nodes_html}
-                    </div>
-
-                    <aside id="sm-inspector-panel" class="sm-inspector-panel" aria-live="polite">
-                        {initial_inspector_html}
-                    </aside>
+                <!-- Compact Selected Component Detail Bar -->
+                <div id="sm-inspector-panel" class="mermaid-detail-bar" aria-live="polite">
+                    {initial_detail_html}
                 </div>
             </div>"#,
             repo = escape_html(repo_full_name),
             summary = escape_html(&diagram.architecture_summary),
-            state_nodes_html = state_nodes_html,
-            initial_inspector_html = initial_inspector_html
+            snake_rows_html = snake_rows_html,
+            initial_detail_html = initial_detail_html
         )
     }
 
@@ -3421,7 +3833,53 @@ pub mod templates {
         }
 
         let kb_loaded = report.total_bytes_loaded as f64 / 1024.0;
-        let grade_escaped = escape_html(&report.grade);
+
+        // Compute deterministic, transparent Security Score (Higher = Safer) & Threat Exposure % (Lower = Safer)
+        let mut crit_count = 0usize;
+        let mut high_count = 0usize;
+        let mut med_count = 0usize;
+        let mut low_count = 0usize;
+        let mut patched_count = 0usize;
+        let mut raw_exposure_pts = 0u32;
+
+        for f in &report.findings {
+            let sev_up = f.severity.to_uppercase();
+            let pts = match sev_up.as_str() {
+                "CRITICAL" => {
+                    crit_count += 1;
+                    22
+                }
+                "HIGH" => {
+                    high_count += 1;
+                    12
+                }
+                "MEDIUM" => {
+                    med_count += 1;
+                    6
+                }
+                _ => {
+                    low_count += 1;
+                    2
+                }
+            };
+            if f.patch_created {
+                patched_count += 1;
+            } else {
+                raw_exposure_pts += pts;
+            }
+        }
+
+        let exposure_pct = raw_exposure_pts.min(100);
+        let security_health_score = 100_u32.saturating_sub(exposure_pct);
+        let (computed_grade, verdict_label, meter_color) = match security_health_score {
+            90..=100 => ("A", "HARDENED • MINIMAL RISK", "var(--sev-clean)"),
+            75..=89 => ("B", "STRONG • LOW RISK", "var(--sev-low)"),
+            55..=74 => ("C", "MODERATE RISK • PATCH ADVISED", "var(--sev-medium)"),
+            35..=54 => ("D", "ELEVATED RISK • VULNERABLE", "var(--sev-high)"),
+            _ => ("F", "CRITICAL RISK • URGENT PATCH NEEDED", "var(--sev-critical)"),
+        };
+
+        let grade_escaped = escape_html(computed_grade);
         let compact_badge = if report.auto_compacted {
             format!(
                 r#"<span class="meta-tag" style="border-color:var(--buzz-green);color:var(--buzz-green);">⚡ AUTO-COMPACTED: -{} TOKENS</span>"#,
@@ -3432,16 +3890,49 @@ pub mod templates {
         };
 
         let scan_id_attr = escape_html(report.scan_id.as_deref().unwrap_or(""));
+        let repo_escaped = escape_html(&report.repo_full_name);
         let diagram_html = if let Some(diag) = &report.diagram {
             render_component_diagram(&report.repo_full_name, diag)
         } else {
-            String::new()
+            format!(
+                r#"<div class="pixel-box" style="padding:28px;text-align:center;border-color:var(--buzz-cyan);">
+                    <div style="font-family:var(--font-display);color:var(--buzz-cyan);font-size:0.9rem;margin-bottom:10px;">
+                        🔀 NO STATE MACHINE DIAGRAM GENERATED FOR THIS AUDIT YET
+                    </div>
+                    <p style="font-family:var(--font-code);color:var(--text-muted);font-size:0.9rem;margin-bottom:18px;">
+                        Click below to have Artist Buzz map `{repo}` into an interactive State Machine &amp; User-Flow Diagram.
+                    </p>
+                    <button
+                        type="button"
+                        class="pixel-btn pixel-btn-primary"
+                        onclick="window.buzzGenerateDiagramForAudit('{scan_id}', '{repo}')"
+                    >
+                        🎨 GENERATE STATE MACHINE DIAGRAM
+                    </button>
+                </div>"#,
+                repo = repo_escaped,
+                scan_id = scan_id_attr
+            )
         };
         let diagram_btn_label = if report.diagram.is_some() {
             "🎨 REGENERATE DIAGRAM"
         } else {
             "🎨 CREATE CODEBASE DIAGRAM"
         };
+
+        // Serialize report context for the Talk to Buzz assistant
+        let serialized_report_context = serde_json::to_string(&serde_json::json!({
+            "repo_full_name": report.repo_full_name,
+            "default_branch": report.default_branch,
+            "risk_score": report.risk_score,
+            "grade": report.grade,
+            "executive_summary": report.executive_summary,
+            "inspected_file_paths": report.inspected_file_paths,
+            "findings": report.findings,
+            "diagram": report.diagram,
+        }))
+        .unwrap_or_default();
+        let escaped_report_context = escape_html(&serialized_report_context);
 
         format!(
             r#"<div class="pixel-box-gold report-header-card" data-scan-id="{scan_id}" data-repo="{repo}">
@@ -3484,23 +3975,44 @@ pub mod templates {
                     </div>
 
                     <div class="grade-box">
-                        <div>
-                            <div style="font-size:0.68rem;color:var(--text-muted);">SECURITY GRADE</div>
-                            <div style="font-family:var(--font-code);font-size:0.85rem;color:var(--buzz-yellow);">
-                                RISK SCORE: {risk}/100
+                        <div style="text-align:right;">
+                            <div style="font-size:0.68rem;color:var(--text-muted);letter-spacing:0.5px;">
+                                SECURITY HEALTH SCORE (HIGHER = SAFER)
+                            </div>
+                            <div style="font-family:var(--font-code);font-weight:600;font-size:1.05rem;color:{meter_color};margin:2px 0;">
+                                {health_score} / 100
+                            </div>
+                            <div style="font-family:var(--font-code);font-size:0.74rem;color:var(--buzz-yellow);">
+                                {verdict_label}
                             </div>
                         </div>
-                        <div class="grade-letter grade-{grade}">{grade}</div>
+                        <div class="grade-letter grade-{grade}" title="Grade A (90-100) = Hardened | Grade B (75-89) = Low Risk | Grade C (55-74) = Moderate Risk | Grade D (35-54) = Elevated Risk | Grade F (0-34) = Critical Risk">{grade}</div>
                     </div>
                 </div>
 
                 <div class="risk-meter-wrap">
-                    <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted);margin-bottom:6px;">
-                        <span>THREAT EXPOSURE METER</span>
-                        <span>{risk}%</span>
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:0.76rem;font-family:var(--font-code);margin-bottom:6px;">
+                        <span style="color:var(--text-muted);">
+                            THREAT EXPOSURE METER <strong style="color:var(--buzz-cyan);">(0% = SAFE • 100% = CRITICAL DANGER — LOWER IS SAFER)</strong>
+                        </span>
+                        <strong style="color:{meter_color};">{exposure_pct}% EXPOSURE ({verdict_label})</strong>
                     </div>
                     <div class="risk-meter-bar">
-                        <div class="risk-meter-fill" style="width:{risk}%;"></div>
+                        <div class="risk-meter-fill" style="width:{exposure_pct}%;background:repeating-linear-gradient(to right, {meter_color} 0px, {meter_color} 12px, #080d1e 12px, #080d1e 15px);"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-family:var(--font-code);font-size:0.68rem;color:var(--text-dim);margin-top:4px;">
+                        <span>0% SAFE (GRADE A)</span>
+                        <span>25% LOW (GRADE B)</span>
+                        <span>50% MODERATE (GRADE C)</span>
+                        <span>75% HIGH (GRADE D)</span>
+                        <span>100% CRITICAL (GRADE F)</span>
+                    </div>
+                    <div class="report-meta-tags" style="margin-top:10px;">
+                        <span class="meta-tag" style="border-color:var(--sev-critical);color:var(--sev-critical);">CRITICAL: {crit_count} (-22 pts ea)</span>
+                        <span class="meta-tag" style="border-color:var(--sev-high);color:var(--sev-high);">HIGH: {high_count} (-12 pts ea)</span>
+                        <span class="meta-tag" style="border-color:var(--sev-medium);color:var(--sev-medium);">MEDIUM: {med_count} (-6 pts ea)</span>
+                        <span class="meta-tag" style="border-color:var(--sev-low);color:var(--sev-low);">LOW: {low_count} (-2 pts ea)</span>
+                        <span class="meta-tag" style="border-color:var(--buzz-green);color:var(--buzz-green);">✓ PATCHED PRs: {patched_count} (Restored)</span>
                     </div>
                 </div>
 
@@ -3521,15 +4033,111 @@ pub mod templates {
                 </details>
             </div>
 
-            <div id="diagram-section-slot">
-                {diagram_html}
+            <!-- Compact Menu to Toggle Between Vulnerabilities, Codebase Diagram & Talk to Buzz -->
+            <nav class="report-view-tabs" aria-label="Report Section Toggle">
+                <button
+                    id="tab-btn-vulns"
+                    type="button"
+                    class="report-tab-btn active"
+                    onclick="window.buzzSwitchReportTab('vulns')"
+                >
+                    🛡️ VULNERABILITIES ({hits})
+                </button>
+                <button
+                    id="tab-btn-diagram"
+                    type="button"
+                    class="report-tab-btn"
+                    onclick="window.buzzSwitchReportTab('diagram')"
+                >
+                    🔀 CODEBASE DIAGRAM
+                </button>
+                <button
+                    id="tab-btn-chat"
+                    type="button"
+                    class="report-tab-btn"
+                    onclick="window.buzzSwitchReportTab('chat')"
+                >
+                    💬 TALK TO BUZZ
+                </button>
+            </nav>
+
+            <!-- Tab Pane 1: Vulnerabilities Report -->
+            <div id="report-pane-vulns" class="report-tab-pane active">
+                <div class="findings-grid">
+                    {findings_html}
+                </div>
             </div>
 
-            <div class="findings-grid">
-                {findings_html}
+            <!-- Tab Pane 2: Interactive State Machine & User-Flow Diagram -->
+            <div id="report-pane-diagram" class="report-tab-pane">
+                <div id="diagram-section-slot">
+                    {diagram_html}
+                </div>
+            </div>
+
+            <!-- Tab Pane 3: Talk to Buzz Codebase Assistant -->
+            <div id="report-pane-chat" class="report-tab-pane">
+                <div class="pixel-box buzz-chat-card">
+                    <div class="buzz-chat-header">
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <img src="/assets/buzz-logo.svg" alt="Buzz" class="buzz-chat-avatar" />
+                            <div>
+                                <div class="report-repo-title" style="color:var(--buzz-yellow);font-size:0.95rem;margin-bottom:2px;">
+                                    💬 TALK TO BUZZ // {repo}
+                                </div>
+                                <div style="font-family:var(--font-code);font-size:0.8rem;color:var(--text-muted);">
+                                    Gemini 4 Argon has full context of this audit report ({hits} findings, grade {grade}) and all {files} loaded repository files.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Prompt Chips -->
+                    <div class="buzz-chat-prompts">
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Walk me through the top vulnerabilities and suggest PRs I can open right now.')">
+                            Suggest PRs for top vulnerabilities
+                        </button>
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Create a PR now to fix the highest-severity vulnerability in this report.')">
+                            ⚡ Create PR for top vulnerability
+                        </button>
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('How do requests and data flow through the main files in this codebase?')">
+                            Explain codebase architecture
+                        </button>
+                        <button type="button" class="chip-btn" onclick="window.buzzAskQuickPrompt('Can we re-audit this repository to check for new commits?')">
+                            Re-audit repository
+                        </button>
+                    </div>
+
+                    <!-- Chat Message History -->
+                    <div id="buzz-chat-messages" class="buzz-chat-messages">
+                        <div class="buzz-chat-msg assistant">
+                            <div class="buzz-msg-sender">⚡ BUZZ (GEMINI 4 ARGON)</div>
+                            <div class="buzz-msg-body">I've loaded <strong>{repo}</strong> ({files} files, Grade <strong>{grade}</strong>, {hits} findings) into my 1M context window. Ask me anything about the vulnerabilities, specific source files, or how the codebase works!</div>
+                        </div>
+                    </div>
+
+                    <!-- Chat Input Form -->
+                    <form id="buzz-chat-form" class="buzz-chat-form" onsubmit="return window.buzzSendChatMessage(this, event);">
+                        <input type="hidden" name="scan_id" value="{scan_id}" />
+                        <input type="hidden" name="repo" value="{repo}" />
+                        <textarea name="report_context" style="display:none;">{report_context}</textarea>
+                        <input
+                            id="buzz-chat-input"
+                            name="question"
+                            type="text"
+                            class="pixel-input"
+                            placeholder="Ask Buzz about {repo} (e.g. How does auth work in src/lib.rs?)"
+                            required
+                            autocomplete="off"
+                        />
+                        <button id="buzz-chat-submit-btn" type="submit" class="pixel-btn pixel-btn-primary" style="padding:13px 22px;font-size:0.78rem;flex-shrink:0;">
+                            ⚡ ASK BUZZ
+                        </button>
+                    </form>
+                </div>
             </div>"#,
             scan_id = scan_id_attr,
-            repo = escape_html(&report.repo_full_name),
+            repo = repo_escaped,
             diagram_btn_label = diagram_btn_label,
             diagram_html = diagram_html,
             branch = escape_html(&report.default_branch),
@@ -3542,11 +4150,37 @@ pub mod templates {
             compact_badge = compact_badge,
             cves = report.cves_checked,
             hits = report.findings.len(),
-            risk = report.risk_score,
+            health_score = security_health_score,
+            exposure_pct = exposure_pct,
+            verdict_label = verdict_label,
+            meter_color = meter_color,
+            crit_count = crit_count,
+            high_count = high_count,
+            med_count = med_count,
+            low_count = low_count,
+            patched_count = patched_count,
             grade = grade_escaped,
             summary = escape_html(&report.executive_summary),
             files_chips = files_chips,
-            findings_html = findings_html
+            findings_html = findings_html,
+            report_context = escaped_report_context
+        )
+    }
+
+    pub fn render_chat_turn(question: &str, answer: &str, actions_html: &str) -> String {
+        format!(
+            r#"<div class="buzz-chat-msg user">
+                <div class="buzz-msg-sender">YOU</div>
+                <div class="buzz-msg-body">{q}</div>
+            </div>
+            <div class="buzz-chat-msg assistant">
+                <div class="buzz-msg-sender">⚡ BUZZ (GEMINI 4 ARGON)</div>
+                <div class="buzz-msg-body">{a}</div>
+                {actions}
+            </div>"#,
+            q = escape_html(question),
+            a = escape_html(answer),
+            actions = actions_html
         )
     }
 }

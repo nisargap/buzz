@@ -294,11 +294,20 @@
           style="margin-top: 12px; padding: 18px; background: var(--terminal-bg); border: 2px dashed var(--border-blue); text-align: center;"
         >
           <div style="font-family: var(--font-display); font-size: 0.72rem; color: var(--buzz-yellow); margin-bottom: 8px;">
-            🔒 SIGN IN REQUIRED TO SCAN REPOSITORIES
+            🔒 SIGN IN TO START YOUR AUDIT
           </div>
           <div style="font-family: var(--font-code); font-size: 0.8rem; color: var(--text-muted);">
-            Use Sign in with GitHub in the top-right to select a repository, run 1M-context CVE audits, and open Pull Request patches.
+            Connect your GitHub account to choose a repository and start scanning.
           </div>
+          <button
+            id="repo-signin-btn"
+            type="button"
+            class="pixel-btn pixel-btn-primary pixel-btn-sm"
+            style="margin-top: 16px; max-width: 100%; min-height: 44px;"
+            onclick="window.buzzConnectGitHub()"
+          >
+            SIGN IN WITH GITHUB
+          </button>
         </div>
 
         <!-- Shown ONLY when signed in with GitHub -->
@@ -1744,6 +1753,7 @@
             } else if (reportContainer) {
               reportContainer.innerHTML = html + reportContainer.innerHTML;
             }
+            window.buzzSwitchReportTab('diagram');
             persistActiveReportState();
             window.buzzGoToStep(4);
           } else {
@@ -1757,6 +1767,147 @@
           }
           window.buzzGoToStep(4);
         }
+      };
+
+      window.buzzSwitchReportTab = function (tabName) {
+        const vulnsBtn = document.getElementById('tab-btn-vulns');
+        const diagBtn = document.getElementById('tab-btn-diagram');
+        const chatBtn = document.getElementById('tab-btn-chat');
+        const vulnsPane = document.getElementById('report-pane-vulns');
+        const diagPane = document.getElementById('report-pane-diagram');
+        const chatPane = document.getElementById('report-pane-chat');
+
+        [vulnsBtn, diagBtn, chatBtn].forEach(function (b) {
+          if (b) b.classList.remove('active');
+        });
+        [vulnsPane, diagPane, chatPane].forEach(function (p) {
+          if (p) p.classList.remove('active');
+        });
+
+        if (tabName === 'diagram') {
+          if (diagBtn) diagBtn.classList.add('active');
+          if (diagPane) diagPane.classList.add('active');
+        } else if (tabName === 'chat') {
+          if (chatBtn) chatBtn.classList.add('active');
+          if (chatPane) chatPane.classList.add('active');
+          const chatInput = document.getElementById('buzz-chat-input');
+          if (chatInput) chatInput.focus();
+        } else {
+          if (vulnsBtn) vulnsBtn.classList.add('active');
+          if (vulnsPane) vulnsPane.classList.add('active');
+        }
+        persistActiveReportState();
+      };
+
+      window.buzzAskQuickPrompt = function (promptText) {
+        const chatInput = document.getElementById('buzz-chat-input');
+        const chatForm = document.getElementById('buzz-chat-form');
+        if (chatInput && chatForm) {
+          chatInput.value = promptText;
+          window.buzzSendChatMessage(chatForm, null);
+        }
+      };
+
+      window.buzzSendChatMessage = async function (formEl, evt) {
+        if (evt && evt.preventDefault) evt.preventDefault();
+        if (!formEl) return false;
+
+        const inputEl = document.getElementById('buzz-chat-input');
+        const submitBtn = document.getElementById('buzz-chat-submit-btn');
+        const messagesEl = document.getElementById('buzz-chat-messages');
+        const question = inputEl ? inputEl.value.trim() : '';
+        if (!question) return false;
+
+        const formData = new FormData(formEl);
+        const params = new URLSearchParams();
+        formData.forEach(function (val, key) {
+          params.append(key, String(val));
+        });
+
+        if (inputEl) inputEl.value = '';
+        if (submitBtn) submitBtn.disabled = true;
+
+        const BUZZ_THINKING_WORDS = [
+          'Thundering...',
+          'Storming...',
+          'Cloud making...',
+          'Zeus-ing...'
+        ];
+        let wordIdx = Math.floor(Math.random() * BUZZ_THINKING_WORDS.length);
+
+        // Show Spinning Yellow Electric Loader bubble with Thundering / Storming / Cloud making / Zeus-ing
+        const thinkingEl = document.createElement('div');
+        thinkingEl.className = 'buzz-chat-msg assistant';
+        thinkingEl.innerHTML =
+          '<div class="buzz-msg-sender">⚡ BUZZ (GEMINI 4 ARGON)</div>' +
+          '<div class="buzz-electric-loader">' +
+          '<svg class="buzz-electric-spinner-svg" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">' +
+          '<rect x="6" y="0" width="4" height="2" fill="#FFF9C4" />' +
+          '<rect x="11" y="2" width="3" height="3" fill="#FFE047" />' +
+          '<rect x="14" y="6" width="2" height="4" fill="#FFC312" />' +
+          '<rect x="11" y="11" width="3" height="3" fill="#FFA800" />' +
+          '<rect x="6" y="14" width="4" height="2" fill="#FF8F00" />' +
+          '<rect x="2" y="11" width="3" height="3" fill="#FFA800" />' +
+          '<rect x="0" y="6" width="2" height="4" fill="#FFE047" />' +
+          '<rect x="2" y="2" width="3" height="3" fill="#FFF9C4" />' +
+          '<rect x="7" y="4" width="3" height="2" fill="#FFE047" />' +
+          '<rect x="6" y="6" width="4" height="2" fill="#FFF9C4" />' +
+          '<rect x="7" y="8" width="3" height="2" fill="#FFE047" />' +
+          '<rect x="6" y="10" width="2" height="2" fill="#FFA800" />' +
+          '</svg>' +
+          '<span class="buzz-electric-word">' +
+          BUZZ_THINKING_WORDS[wordIdx] +
+          '</span>' +
+          '</div>';
+
+        if (messagesEl) {
+          messagesEl.appendChild(thinkingEl);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        const wordSpan = thinkingEl.querySelector('.buzz-electric-word');
+        const wordInterval = setInterval(function () {
+          wordIdx = (wordIdx + 1) % BUZZ_THINKING_WORDS.length;
+          if (wordSpan) {
+            wordSpan.textContent = BUZZ_THINKING_WORDS[wordIdx];
+          }
+        }, 850);
+
+        try {
+          const headers = getAuthHeaders();
+          headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+
+          const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: headers,
+            body: params.toString()
+          });
+
+          const html = await res.text();
+          clearInterval(wordInterval);
+          if (thinkingEl && thinkingEl.parentNode) {
+            thinkingEl.parentNode.removeChild(thinkingEl);
+          }
+          if (messagesEl && html) {
+            const wrapper = document.createElement('div');
+            wrapper.style.display = 'contents';
+            wrapper.innerHTML = html;
+            messagesEl.appendChild(wrapper);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            persistActiveReportState();
+          }
+        } catch (_) {
+          clearInterval(wordInterval);
+          if (thinkingEl) {
+            thinkingEl.innerHTML =
+              '<div class="buzz-msg-sender">⚡ BUZZ</div><div class="buzz-msg-body" style="color:var(--sev-critical);">Could not reach Buzz chat endpoint. Please try again.</div>';
+          }
+        } finally {
+          clearInterval(wordInterval);
+          if (submitBtn) submitBtn.disabled = false;
+          if (inputEl) inputEl.focus();
+        }
+        return false;
       };
 
       window.buzzFinishAnalysisPage = function (event) {

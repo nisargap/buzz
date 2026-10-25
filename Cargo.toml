@@ -44,6 +44,11 @@ path = "api/scans.rs"
 name = "diagram"
 path = "api/diagram.rs"
 
+[[bin]]
+name = "chat"
+path = "api/chat.rs"
+
+
 
 
 [dependencies]

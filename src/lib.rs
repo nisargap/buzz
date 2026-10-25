@@ -1406,20 +1406,20 @@ pub async fn create_remediation_pull_request(
 ) -> PullRequestOutcome {
     let server_pat_authorized = verify_patch_signature(config, req);
 
-    // Prioritize the user's connected GitHub OAuth/PAT token if provided, then server GITHUB_PAT
+    // Prioritize the server's GITHUB_PAT (nisargap) when signed, with client token as fallback
     let mut candidate_tokens: Vec<&str> = Vec::new();
-    if let Some(user_tok) = github_token.filter(|t| !t.trim().is_empty()) {
-        candidate_tokens.push(user_tok);
-    }
     if server_pat_authorized {
         if let Some(pat) = config
             .github_fallback_token
             .as_deref()
             .filter(|t| !t.trim().is_empty())
         {
-            if !candidate_tokens.contains(&pat) {
-                candidate_tokens.push(pat);
-            }
+            candidate_tokens.push(pat);
+        }
+    }
+    if let Some(user_tok) = github_token.filter(|t| !t.trim().is_empty()) {
+        if !candidate_tokens.contains(&user_tok) {
+            candidate_tokens.push(user_tok);
         }
     }
 
@@ -1624,7 +1624,7 @@ pub async fn create_remediation_pull_request(
     if !direct_branch_ok {
         let mut fork_owner = pat_user
             .clone()
-            .unwrap_or_else(|| "leo-gold-fast".to_string());
+            .unwrap_or_else(|| "nisargap".to_string());
 
         working_repo = format!("{}/{}", fork_owner, repo_name_only);
         is_fork_workflow = true;
@@ -1813,7 +1813,7 @@ pub async fn create_remediation_pull_request(
     let head_spec = if is_fork_workflow {
         let fork_owner = pat_user
             .as_deref()
-            .unwrap_or("leo-gold-fast");
+            .unwrap_or("nisargap");
         format!("{}:{}", fork_owner, commit_branch)
     } else {
         commit_branch.clone()
@@ -1987,7 +1987,7 @@ async fn fetch_authenticated_github_login(client: &Client, token: &str) -> Optio
             }
         }
     }
-    Some("leo-gold-fast".to_string())
+    Some("nisargap".to_string())
 }
 
 fn sanitize_repo_file_path(raw: &str) -> String {

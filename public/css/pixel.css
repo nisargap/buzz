@@ -1438,101 +1438,148 @@ body::before {
 }
 
 /* ==========================================================================
-   COMPONENT FLOW DIAGRAM NODES & DIRECTIONAL ARROWS
+   HEAT-SATURATED NEURAL MAP DIAGRAM & THERMAL TELEMETRY
    ========================================================================== */
 
-.diag-flow-pipeline {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
-  padding: 8px 0;
+.neural-map-card {
+  background: #05020d;
+  border: 4px solid #ff2e63;
+  box-shadow:
+    0 0 0 4px var(--border-dark),
+    8px 8px 0 0 var(--border-dark),
+    0 0 38px rgba(255, 46, 99, 0.22);
+  padding: 22px;
+  margin-bottom: 22px;
 }
 
-.diag-node-card {
+.neural-map-viewport {
   width: 100%;
-  max-width: 720px;
-  background: var(--terminal-bg);
-  border: 3px solid var(--border-blue);
-  box-shadow: 5px 5px 0 0 var(--border-dark);
-  padding: 16px 18px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(157, 78, 221, 0.16) 0%, rgba(5, 2, 13, 0.98) 78%),
+    #04020a;
+  border: 3px solid #3a1c5c;
+  box-shadow: inset 0 0 40px rgba(255, 46, 99, 0.15);
+  overflow: hidden;
+  position: relative;
+}
+
+.neural-map-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Flowing synaptic action-potential pulses along neural axons */
+.synapse-axon-pulse {
+  stroke-dasharray: 8 14;
+  animation: axon-flow 1.4s linear infinite;
+}
+
+@keyframes axon-flow {
+  from { stroke-dashoffset: 44; }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* Pulsing thermal aura & neural core rings */
+.neural-aura-pulse {
+  animation: thermal-breathe 2.6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes thermal-breathe {
+  0%, 100% { opacity: 0.78; transform: scale(1); }
+  50%      { opacity: 0.98; transform: scale(1.08); }
+}
+
+.neural-ring-spin {
+  stroke-dasharray: 6 6;
+  animation: ring-orbit 8s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes ring-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Thermal Spectrum Scale Bar */
+.thermal-legend-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: #080414;
+  border: 2px solid #3a1c5c;
+  font-family: var(--font-code);
+  font-size: 0.74rem;
+}
+
+.thermal-gradient-strip {
+  flex: 1;
+  min-width: 180px;
+  height: 12px;
+  border: 2px solid #020106;
+  background: linear-gradient(
+    90deg,
+    #1d3557 0%,
+    #3a86ff 18%,
+    #00f5d4 36%,
+    #9d4edd 54%,
+    #ffb703 72%,
+    #ff2e63 88%,
+    #fff7d6 100%
+  );
+}
+
+.neural-nodes-legend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.neural-node-summary-card {
+  background: #090518;
+  border: 2px solid #3a1c5c;
+  padding: 12px 14px;
   font-family: var(--font-code);
   text-align: left;
 }
 
-.diag-node-card.layer-frontend { border-color: var(--buzz-cyan); }
-.diag-node-card.layer-api      { border-color: var(--buzz-yellow); }
-.diag-node-card.layer-core     { border-color: var(--buzz-green); }
-.diag-node-card.layer-data     { border-color: #b47cff; }
+.neural-node-summary-card.heat-critical { border-color: #ff2e63; }
+.neural-node-summary-card.heat-high     { border-color: #ff8c32; }
+.neural-node-summary-card.heat-warm     { border-color: #ffe047; }
+.neural-node-summary-card.heat-cool     { border-color: #00f5d4; }
 
-.diag-node-header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.diag-layer-badge {
+.neural-heat-pill {
   font-family: var(--font-display);
-  font-size: 0.6rem;
-  padding: 5px 8px;
-  border: 2px solid var(--border-dark);
+  font-size: 0.58rem;
+  padding: 4px 7px;
+  border: 1px solid #000;
 }
 
-.diag-layer-badge.layer-frontend { background: var(--buzz-cyan); color: #041924; }
-.diag-layer-badge.layer-api      { background: var(--buzz-yellow); color: #1f1700; }
-.diag-layer-badge.layer-core     { background: var(--buzz-green); color: #041d11; }
-.diag-layer-badge.layer-data     { background: #b47cff; color: #160829; }
-
-.diag-node-title {
-  font-family: var(--font-code);
-  font-weight: 600;
-  font-size: 0.98rem;
-  color: var(--text-main);
-}
-
-.diag-node-desc {
-  font-size: 0.84rem;
-  color: var(--text-muted);
-  line-height: 1.5;
-  margin-bottom: 10px;
-}
+.neural-heat-pill.heat-critical { background: #ff2e63; color: #fff; }
+.neural-heat-pill.heat-high     { background: #ff8c32; color: #160700; }
+.neural-heat-pill.heat-warm     { background: #ffe047; color: #1c1400; }
+.neural-heat-pill.heat-cool     { background: #00f5d4; color: #021c18; }
 
 .diag-files-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 8px;
 }
 
 .diag-file-pill {
-  background: #0d1733;
-  border: 1px solid var(--border-blue);
-  color: var(--buzz-cyan);
+  background: #120929;
+  border: 1px solid #4a2574;
+  color: #7ce4ff;
   font-family: var(--font-code);
-  font-size: 0.74rem;
-  padding: 3px 8px;
-}
-
-.diag-arrow-connector {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin: 6px 0;
-}
-
-.diag-arrow-label {
-  background: #0b1530;
-  border: 2px solid var(--buzz-cyan);
-  color: var(--buzz-yellow);
-  font-family: var(--font-code);
-  font-size: 0.74rem;
-  padding: 3px 10px;
-  margin-bottom: 2px;
-}
-
-.diag-arrow-svg {
-  width: 28px;
-  height: 34px;
-  image-rendering: pixelated;
+  font-size: 0.72rem;
+  padding: 2px 7px;
 }

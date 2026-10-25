@@ -3412,10 +3412,29 @@ pub mod templates {
         };
 
         let scan_id_attr = escape_html(report.scan_id.as_deref().unwrap_or(""));
+        let repo_escaped = escape_html(&report.repo_full_name);
         let diagram_html = if let Some(diag) = &report.diagram {
             render_component_diagram(&report.repo_full_name, diag)
         } else {
-            String::new()
+            format!(
+                r#"<div class="pixel-box" style="padding:28px;text-align:center;border-color:var(--buzz-cyan);">
+                    <div style="font-family:var(--font-display);color:var(--buzz-cyan);font-size:0.9rem;margin-bottom:10px;">
+                        🔀 NO STATE MACHINE DIAGRAM GENERATED FOR THIS AUDIT YET
+                    </div>
+                    <p style="font-family:var(--font-code);color:var(--text-muted);font-size:0.9rem;margin-bottom:18px;">
+                        Click below to have Artist Buzz map `{repo}` into an interactive State Machine &amp; User-Flow Diagram.
+                    </p>
+                    <button
+                        type="button"
+                        class="pixel-btn pixel-btn-primary"
+                        onclick="window.buzzGenerateDiagramForAudit('{scan_id}', '{repo}')"
+                    >
+                        🎨 GENERATE STATE MACHINE DIAGRAM
+                    </button>
+                </div>"#,
+                repo = repo_escaped,
+                scan_id = scan_id_attr
+            )
         };
         let diagram_btn_label = if report.diagram.is_some() {
             "🎨 REGENERATE DIAGRAM"
@@ -3501,15 +3520,41 @@ pub mod templates {
                 </details>
             </div>
 
-            <div id="diagram-section-slot">
-                {diagram_html}
+            <!-- Compact Menu to Toggle Between Vulnerabilities Report & Codebase Diagram -->
+            <nav class="report-view-tabs" aria-label="Report Section Toggle">
+                <button
+                    id="tab-btn-vulns"
+                    type="button"
+                    class="report-tab-btn active"
+                    onclick="window.buzzSwitchReportTab('vulns')"
+                >
+                    🛡️ VULNERABILITIES REPORT ({hits})
+                </button>
+                <button
+                    id="tab-btn-diagram"
+                    type="button"
+                    class="report-tab-btn"
+                    onclick="window.buzzSwitchReportTab('diagram')"
+                >
+                    🔀 CODEBASE DIAGRAM
+                </button>
+            </nav>
+
+            <!-- Tab Pane 1: Vulnerabilities Report -->
+            <div id="report-pane-vulns" class="report-tab-pane active">
+                <div class="findings-grid">
+                    {findings_html}
+                </div>
             </div>
 
-            <div class="findings-grid">
-                {findings_html}
+            <!-- Tab Pane 2: Interactive State Machine & User-Flow Diagram -->
+            <div id="report-pane-diagram" class="report-tab-pane">
+                <div id="diagram-section-slot">
+                    {diagram_html}
+                </div>
             </div>"#,
             scan_id = scan_id_attr,
-            repo = escape_html(&report.repo_full_name),
+            repo = repo_escaped,
             diagram_btn_label = diagram_btn_label,
             diagram_html = diagram_html,
             branch = escape_html(&report.default_branch),

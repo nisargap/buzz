@@ -1557,6 +1557,7 @@
             } else if (reportContainer) {
               reportContainer.innerHTML = html + reportContainer.innerHTML;
             }
+            window.buzzSwitchReportTab('diagram');
             persistActiveReportState();
             window.buzzGoToStep(4);
           } else {
@@ -1570,6 +1571,26 @@
           }
           window.buzzGoToStep(4);
         }
+      };
+
+      window.buzzSwitchReportTab = function (tabName) {
+        const vulnsBtn = document.getElementById('tab-btn-vulns');
+        const diagBtn = document.getElementById('tab-btn-diagram');
+        const vulnsPane = document.getElementById('report-pane-vulns');
+        const diagPane = document.getElementById('report-pane-diagram');
+
+        if (tabName === 'diagram') {
+          if (vulnsBtn) vulnsBtn.classList.remove('active');
+          if (diagBtn) diagBtn.classList.add('active');
+          if (vulnsPane) vulnsPane.classList.remove('active');
+          if (diagPane) diagPane.classList.add('active');
+        } else {
+          if (vulnsBtn) vulnsBtn.classList.add('active');
+          if (diagBtn) diagBtn.classList.remove('active');
+          if (vulnsPane) vulnsPane.classList.add('active');
+          if (diagPane) diagPane.classList.remove('active');
+        }
+        persistActiveReportState();
       };
 
       window.buzzFinishAnalysisPage = function (event) {

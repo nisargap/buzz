@@ -1438,6 +1438,60 @@ body::before {
 }
 
 /* ==========================================================================
+   REPORT VIEW TOGGLE MENU (VULNERABILITIES vs CODEBASE DIAGRAM)
+   ========================================================================== */
+
+.report-view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 8px;
+  background: var(--terminal-bg);
+  border: 3px solid var(--border-blue);
+  box-shadow: 4px 4px 0 0 var(--border-dark);
+}
+
+.report-tab-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  background: var(--panel-alt);
+  border: 2px solid var(--border-dark);
+  cursor: pointer;
+  transition: transform 0.05s steps(2, end);
+}
+
+.report-tab-btn:hover {
+  color: var(--buzz-yellow);
+  background: #16244f;
+}
+
+.report-tab-btn.active {
+  background: var(--buzz-yellow);
+  color: #090d1c;
+  border-color: var(--border-dark);
+  box-shadow:
+    inset -3px -3px 0 0 #d48800,
+    inset 3px 3px 0 0 #fff7b2;
+}
+
+.report-tab-pane {
+  display: none;
+  width: 100%;
+}
+
+.report-tab-pane.active {
+  display: block;
+}
+
+/* ==========================================================================
    INTERACTIVE STATE MACHINE & USER-FLOW DIAGRAM (LARGE READABLE TEXT)
    ========================================================================== */
 

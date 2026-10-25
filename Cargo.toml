@@ -40,6 +40,11 @@ path = "api/refactor.rs"
 name = "scans"
 path = "api/scans.rs"
 
+[[bin]]
+name = "diagram"
+path = "api/diagram.rs"
+
+
 
 [dependencies]
 vercel_runtime = "1"

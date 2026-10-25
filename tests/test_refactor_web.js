@@ -102,7 +102,7 @@ class FakeElement {
   constructor(tagName = 'div') {
     this.tagName = tagName.toUpperCase(); this.children = []; this.handlers = new Map(); this.attributes = new Map();
     this.value = ''; this.checked = false; this.disabled = false; this.hidden = false; this.open = false; this.text = '';
-    this.classes = new Set();
+    this.classes = new Set(); this.style = {};
     this.classList = {
       toggle: (name, force) => force ? this.classes.add(name) : this.classes.delete(name),
       contains: name => this.classes.has(name)
@@ -128,22 +128,27 @@ function fixture(options = {}) {
   const win = new FakeElement(); const document = new FakeElement();
   document.getElementById = id => nodes.get(id); document.createElement = tag => new FakeElement(tag);
   const storage = options.storage || new Map([['buzz_gh_token', 'existing-token']]); const timers = new Map(); const requests = []; let nextTimer = 0;
+  const sessionStore = options.sessionStore || new Map();
+  const storageApi = values => ({ getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) });
   win.document = document;
-  win.sessionStorage = { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) };
+  win.localStorage = storageApi(storage);
+  win.sessionStorage = storageApi(sessionStore);
+  win.Event = class { constructor(type, options = {}) { this.type = type; Object.assign(this, options); } };
   win.AbortController = AbortController;
   win.setTimeout = (handler, delay) => { const id = ++nextTimer; timers.set(id, { handler, delay }); return id; };
   win.clearTimeout = id => timers.delete(id);
   win.fetch = (url, options) => new Promise((resolve, reject) => {
     requests.push({ url, options, resolve: (data, status = 200) => resolve({ ok: status >= 200 && status < 300, status, json: async () => data }), reject });
   });
-  win.buzzGoToStep = step => {
+  win.buzzGoToStep = (step, skipPersist) => {
     win.step = step;
+    if (!skipPersist) win.localStorage.setItem('buzz_wizard_step', String(step === 3 ? 2 : step));
     nodes.get('wizard-step-5').classList.toggle('active', step === 5);
     win.dispatchEvent({ type: 'buzz:step-change', detail: { step } });
   };
   nodes.get('repo-input').value = 'acme/buzz'; mountRefactor(win);
   return {
-    win, nodes, storage, timers, requests, get: id => nodes.get('refactor-' + id),
+    win, nodes, storage, sessionStore, timers, requests, get: id => nodes.get('refactor-' + id),
     click: id => nodes.get('refactor-' + id).dispatchEvent({ type: 'click' }),
     input: (id, value) => { const node = nodes.get('refactor-' + id); node.value = value; node.dispatchEvent({ type: 'input' }); },
     select: (kind, index, checked = true) => { const node = nodes.get('refactor-' + kind).children[index].children[0]; node.checked = checked; node.dispatchEvent({ type: 'change' }); return node; }
@@ -163,6 +168,12 @@ function stage(view, name) {
   assert.deepEqual(stages.filter(id => !view.get(id).hidden), [name]);
 }
 
+test('merged page has parseable scripts, unique IDs and both diagram and refactor controls', () => {
+  for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(script[1]);
+  const ids = Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const id of ['include-diagram-checkbox', 'refactor-open-btn', 'global-user-pill', 'gh-repo-picker']) assert.ok(ids.includes(id));
+});
 test('wizard reuses the repo/login and keeps custom inputs in collapsed optional controls', () => {
   assert.equal((html.match(/id="repo-input"/g) || []).length, 1);
   assert.match(html, /\[1, 2, 3, 4, 5\]\.forEach/);
@@ -476,7 +487,7 @@ test('connect reuses OAuth and persists only a bounded repository and goal retur
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0], { requireRepoAccess: true });
   assert.equal(view.get('connect-btn').disabled, true);
-  const saved = JSON.parse(view.storage.get('buzz_refactor_return'));
+  const saved = JSON.parse(view.sessionStore.get('buzz_refactor_return'));
   assert.deepEqual(Object.keys(saved).sort(), ['createdAt', 'goal', 'repo']);
   assert.equal(saved.repo, 'acme/buzz'); assert.equal(saved.goal, 'nesting');
   assert.ok(Number.isSafeInteger(saved.createdAt));
@@ -484,13 +495,14 @@ test('connect reuses OAuth and persists only a bounded repository and goal retur
   assert.equal(view.get('connect-btn').disabled, false);
   assert.equal(view.requests.length, 0, 'connecting never sends source or publishes');
   view.win.dispatchEvent({ type: 'pagehide' });
-  assert.equal(JSON.parse(view.storage.get('buzz_refactor_return')).goal, 'nesting');
+  assert.equal(JSON.parse(view.sessionStore.get('buzz_refactor_return')).goal, 'nesting');
 });
 test('OAuth return restores the repo and goal, loads metadata once and still requires scope consent', async () => {
-  const storage = new Map([
+  const storage = new Map();
+  const sessionStore = new Map([
     ['buzz_refactor_return', JSON.stringify({ repo: 'acme/other', goal: 'boilerplate', createdAt: Date.now() })]
   ]);
-  const view = fixture({ storage });
+  const view = fixture({ storage, sessionStore });
   assert.equal(view.win.step, 5); assert.equal(view.nodes.get('repo-input').value, 'acme/other');
   assert.equal(view.requests.length, 0);
   storage.set('buzz_gh_token', 'fresh-token');
@@ -498,7 +510,7 @@ test('OAuth return restores the repo and goal, loads metadata once and still req
   view.win.dispatchEvent({ type: 'buzz:auth-change' });
   view.win.dispatchEvent({ type: 'focus' });
   assert.equal(view.requests.length, 1);
-  assert.equal(storage.has('buzz_refactor_return'), false);
+  assert.equal(sessionStore.has('buzz_refactor_return'), false);
   assert.equal(view.requests[0].options.method, 'GET');
   assert.equal(view.requests[0].options.headers['X-GitHub-Token'], 'fresh-token');
   assert.equal(view.requests[0].url, '/api/refactor?repo=acme%2Fother');
@@ -509,14 +521,13 @@ test('OAuth return restores the repo and goal, loads metadata once and still req
   assert.equal(view.requests.length, 1, 'never generates or publishes on return');
 });
 test('OAuth return works when the session is restored before the wizard mounts', async () => {
-  const view = fixture({ storage: new Map([
-    ['buzz_gh_token', 'restored-token'],
+  const view = fixture({ storage: new Map([['buzz_gh_token', 'restored-token']]), sessionStore: new Map([
     ['buzz_refactor_return', JSON.stringify({ repo: 'acme/buzz', goal: 'nesting', createdAt: Date.now() })]
   ]) });
   assert.equal(view.win.step, 5); assert.equal(view.requests.length, 1);
   view.requests[0].resolve(listing); await settle();
   assert.equal(view.get('goal-nesting').attributes.get('aria-pressed'), 'true');
-  assert.equal(view.storage.has('buzz_refactor_return'), false);
+  assert.equal(view.sessionStore.has('buzz_refactor_return'), false);
 });
 test('invalid or stale OAuth navigation intent is discarded without navigation or requests', () => {
   const valid = { repo: 'acme/buzz', goal: 'cleanup', createdAt: Date.now() };
@@ -524,10 +535,10 @@ test('invalid or stale OAuth navigation intent is discarded without navigation o
     { ...valid, goal: '__proto__' }, { ...valid, createdAt: Date.now() - 11 * 60 * 1000 },
     { ...valid, createdAt: Date.now() + 60000 }, { ...valid, createdAt: 'today' }];
   for (const value of values) {
-    const view = fixture({ storage: new Map([['buzz_refactor_return', typeof value === 'string' ? value : JSON.stringify(value)]]) });
+    const view = fixture({ storage: new Map(), sessionStore: new Map([['buzz_refactor_return', typeof value === 'string' ? value : JSON.stringify(value)]]) });
     assert.equal(view.win.step, undefined);
     assert.equal(view.requests.length, 0);
-    assert.equal(view.storage.has('buzz_refactor_return'), false);
+    assert.equal(view.sessionStore.has('buzz_refactor_return'), false);
   }
 });
 test('expired GitHub credentials expose reconnect and stop retries with the rejected token', async () => {
@@ -559,7 +570,7 @@ test('failed sign-in keeps a usable reconnect action and never falls back to a u
   assert.match(view.get('status').textContent, /GitHub provider unavailable/);
   assert.equal(view.get('auth').hidden, false);
   assert.equal(view.get('connect-btn').disabled, false);
-  assert.equal(view.storage.has('buzz_refactor_return'), false);
+  assert.equal(view.sessionStore.has('buzz_refactor_return'), false);
   assert.equal(view.requests.length, 0);
 });
 test('back to repositories cancels OAuth navigation intent', async () => {
@@ -567,16 +578,19 @@ test('back to repositories cancels OAuth navigation intent', async () => {
   view.win.buzzConnectGitHub = async () => {};
   view.click('connect-btn'); await settle();
   view.click('back-btn');
-  assert.equal(view.win.step, 2); assert.equal(view.storage.has('buzz_refactor_return'), false);
+  assert.equal(view.win.step, 2); assert.equal(view.sessionStore.has('buzz_refactor_return'), false);
   view.storage.set('buzz_gh_token', 'new-token'); view.win.dispatchEvent({ type: 'buzz:auth-change' });
   assert.equal(view.win.step, 2); assert.equal(view.requests.length, 0);
 });
-function authFixture({ session = null, oauthError = null, hash = '', configured = true } = {}) {
-  const view = fixture({ storage: new Map() });
+function authFixture({ session = null, oauthError = null, hash = '', configured = true, storage = new Map(), sessionStore = new Map() } = {}) {
+  const view = fixture({ storage, sessionStore });
   const calls = []; let resolveConfig; let onAuth; let prompts = 0;
   view.win.location = { origin: 'http://localhost:3001', search: '', hash };
   view.win.document.body = new FakeElement();
-  view.nodes.get('github-signout-btn').style = {};
+  // The audit shell intentionally renders trusted server HTML; refactor nodes remain text-only.
+  for (const id of ['connected-repos-slot', 'saved-audits-slot', 'report-container']) {
+    Object.defineProperty(view.nodes.get(id), 'innerHTML', { value: '', writable: true });
+  }
   view.win.prompt = () => { prompts += 1; return 'public-user'; };
   view.win.supabase = { createClient: () => ({ auth: {
     onAuthStateChange: handler => { onAuth = handler; },
@@ -587,9 +601,9 @@ function authFixture({ session = null, oauthError = null, hash = '', configured 
   const source = html.slice(html.indexOf('// 5. Supabase GitHub OAuth & HTMX Header Bridge'), html.indexOf('      authReady = initSupabaseAuth();')) +
     'authReady = initSupabaseAuth();';
   vm.runInNewContext(source, {
-    window: view.win, document: view.win.document, sessionStorage: view.win.sessionStorage, URLSearchParams,
-    CustomEvent: class { constructor(type, options = {}) { this.type = type; Object.assign(this, options); } },
-    fetch: () => config
+    window: view.win, document: view.win.document, localStorage: view.win.localStorage, sessionStorage: view.win.sessionStorage, URLSearchParams,
+    Event: view.win.Event, CustomEvent: view.win.Event,
+    fetch: url => url === '/api/auth_config' ? config : Promise.resolve({ ok: false })
   });
   return Object.assign(view, {
     calls, resolveConfig: () => resolveConfig({ ok: true, json: async () => configured ? { supabase_url: 'https://example.supabase.co', supabase_anon_key: 'public-test-key' } : {} }),
@@ -611,12 +625,13 @@ test('real auth bridge never treats username-only or Supabase-only sessions as r
   const view = authFixture({ session: { user: { id: 'supabase-user', user_metadata: { user_name: 'octocat' } } } });
   view.resolveConfig(); await settle();
   assert.equal(view.storage.has('buzz_gh_token'), false);
-  assert.equal(view.nodes.get('github-auth-label').textContent, 'RECONNECT GITHUB FOR REPOSITORY ACCESS');
+  assert.equal(view.nodes.get('global-user-label').textContent, '@octocat');
+  assert.equal(view.get('auth').hidden, false);
   view.win.buzzOpenRefactor(); assert.equal(view.get('auth').hidden, false); assert.equal(view.requests.length, 0);
 });
 test('real OAuth callback preserves the refactor return and forwards the provider token once', async () => {
   const view = authFixture({ hash: '#access_token=test-callback' });
-  view.storage.set('buzz_refactor_return', JSON.stringify({ repo: 'acme/buzz', goal: 'nesting', createdAt: Date.now() }));
+  view.sessionStore.set('buzz_refactor_return', JSON.stringify({ repo: 'acme/buzz', goal: 'nesting', createdAt: Date.now() }));
   view.resolveConfig(); await settle();
   const session = { provider_token: 'oauth-provider-token', user: { id: 'supabase-user', user_metadata: { user_name: 'octocat' } } };
   view.emitAuth('SIGNED_IN', session);
@@ -624,10 +639,13 @@ test('real OAuth callback preserves the refactor return and forwards the provide
   assert.equal(view.win.step, 5);
   assert.equal(view.requests.length, 1);
   assert.equal(view.requests[0].options.headers['X-GitHub-Token'], 'oauth-provider-token');
-  assert.equal(view.storage.has('buzz_refactor_return'), false);
-  assert.equal(view.nodes.get('github-auth-label').textContent, 'GITHUB CONNECTED: @octocat');
+  assert.equal(view.sessionStore.has('buzz_refactor_return'), false);
+  assert.equal(view.nodes.get('global-user-label').textContent, '@octocat');
+  assert.equal(view.get('auth').hidden, true);
   view.requests[0].resolve(listing); await settle();
   assert.equal(view.get('goal-nesting').attributes.get('aria-pressed'), 'true');
+  assert.equal(view.storage.get('buzz_selected_repo'), 'acme/buzz');
+  assert.equal(view.sessionStore.has('buzz_gh_token'), false);
 });
 test('later auth events do not repeatedly navigate away after the initial OAuth return', async () => {
   const session = { provider_token: 'oauth-provider-token', user: { id: 'supabase-user' } };
@@ -646,10 +664,10 @@ test('real reconnect clears a rejected token before redirect and preserves the r
   view.click('connect-btn'); await settle();
   assert.equal(view.calls.length, 1);
   assert.equal(view.storage.has('buzz_gh_token'), false);
-  assert.equal(view.storage.has('buzz_refactor_return'), true);
+  assert.equal(view.sessionStore.has('buzz_refactor_return'), true);
   assert.equal(view.requests.length, 1, 'never retries with a rejected token during redirect');
   view.emitAuth('SIGNED_IN', { provider_token: 'fresh-token', user: { id: 'supabase-user' } });
-  assert.equal(view.storage.has('buzz_refactor_return'), false);
+  assert.equal(view.sessionStore.has('buzz_refactor_return'), false);
   assert.equal(view.requests.length, 2);
   assert.equal(view.requests[1].options.headers['X-GitHub-Token'], 'fresh-token');
 });
@@ -661,8 +679,56 @@ test('real strict OAuth errors do not fall through to the legacy token or userna
     assert.equal(view.storage.has('buzz_gh_token'), false);
   }
 });
+test('main repository dropdown invalidates refactor scope and clears saved custom targets', async () => {
+  const view = authFixture(); view.resolveConfig(); await settle();
+  view.emitAuth('SIGNED_IN', { provider_token: 'provider-token', user: { id: 'supabase-user' } });
+  view.win.buzzOpenRefactor(); view.requests[0].resolve(listing); await settle();
+  view.click('goal-next-btn'); view.click('generate-btn'); view.requests[1].resolve(proposalResponse()); await settle();
+  view.win.buzzOnRepoDropdownChange('acme/other');
+  assert.equal(view.nodes.get('repo-input').value, 'acme/other');
+  assert.equal(view.storage.get('buzz_selected_repo'), 'acme/other');
+  assert.equal(view.get('repo').textContent, 'acme/other');
+  assert.equal(view.get('edits').children.length, 0);
+  view.click('publish-btn'); assert.equal(view.requests.length, 2);
+  view.win.buzzOnRepoDropdownChange('__custom__');
+  assert.equal(view.storage.get('buzz_selected_repo'), '');
+  assert.equal(view.get('open-btn').disabled, true);
+  assert.equal(view.nodes.get('custom-repo-panel').style.display, 'block');
+});
+test('persistent main session restores the refactor step without persisting proposal or consent', async () => {
+  const storage = new Map([['buzz_gh_token', 'persisted-token'], ['buzz_sb_uid', 'user'], ['buzz_selected_repo', 'acme/other'], ['buzz_wizard_step', '5']]);
+  const view = authFixture({ storage }); view.resolveConfig(); await settle();
+  assert.equal(view.win.step, 5);
+  assert.equal(view.get('repo').textContent, 'acme/other');
+  assert.equal(view.get('auth').hidden, true);
+  assert.equal(view.requests.length, 1);
+  assert.equal(view.requests[0].options.method, 'GET');
+  assert.equal(view.requests[0].options.headers['X-GitHub-Token'], 'persisted-token');
+  assert.equal(view.get('publish-btn').disabled, true);
+  assert.equal(view.sessionStore.has('buzz_gh_token'), false);
+});
+test('OAuth intent wins over the old saved target and token refresh keeps the refactor goal', async () => {
+  const view = authFixture({
+    hash: '#access_token=callback', storage: new Map([['buzz_selected_repo', 'acme/old']]),
+    sessionStore: new Map([['buzz_refactor_return', JSON.stringify({ repo: 'acme/buzz', goal: 'nesting', createdAt: Date.now() })]])
+  });
+  view.resolveConfig(); await settle();
+  const session = { provider_token: 'fresh-token', user: { id: 'supabase-user' } };
+  view.emitAuth('SIGNED_IN', session);
+  view.requests[0].resolve(listing); await settle();
+  view.emitAuth('TOKEN_REFRESHED', { user: session.user });
+  assert.equal(view.win.step, 5);
+  assert.equal(view.storage.get('buzz_selected_repo'), 'acme/buzz');
+  assert.equal(view.nodes.get('selected-repo-name').textContent, 'acme/buzz');
+  assert.equal(view.get('goal-nesting').attributes.get('aria-pressed'), 'true');
+  assert.equal(view.requests.length, 1);
+});
 test('sign-out clears token and broadcasts before waiting for Supabase', () => {
   const signOut = html.slice(html.indexOf('window.buzzSignOutGitHub ='), html.indexOf('window.buzzSelectRepo ='));
-  assert.ok(signOut.indexOf("sessionStorage.removeItem('buzz_gh_token')") < signOut.indexOf('await supabaseClient.auth.signOut()'));
+  assert.ok(signOut.indexOf('clearSavedAuth()') >= 0);
+  assert.ok(signOut.indexOf('clearSavedAuth()') < signOut.indexOf('await supabaseClient.auth.signOut()'));
+  const clearAuth = html.slice(html.indexOf('function clearSavedAuth()'), html.indexOf('function finishOAuthNavigation()'));
+  assert.match(clearAuth, /localStorage\.removeItem\('buzz_gh_token'\)/);
+  assert.match(clearAuth, /sessionStorage\.removeItem\('buzz_refactor_return'\)/);
   assert.ok(signOut.indexOf('updateAuthBadge()') < signOut.indexOf('await supabaseClient.auth.signOut()'));
 });

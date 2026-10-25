@@ -28,6 +28,9 @@ pub struct AppConfig {
     pub github_fallback_token: Option<String>,
 }
 
+const DEFAULT_PUBLIC_SUPABASE_URL: &str = "https://nqdkfucblwmdmxmungev.supabase.co";
+const DEFAULT_PUBLIC_SUPABASE_ANON_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5xZGtmdWNibHdtZG14bXVuZ2V2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NDA2NjUsImV4cCI6MjEwODUxNjY2NX0.DRXe_D9liZmrR-mXbDOTU_0Ejkj1ywj5_CBdy90w6Eo";
+
 impl AppConfig {
     pub fn from_env() -> Self {
         load_dotenv_files();
@@ -41,10 +44,12 @@ impl AppConfig {
 
         Self {
             supabase_url: non_empty("SUPABASE_URL")
-                .or_else(|| non_empty("NEXT_PUBLIC_SUPABASE_URL")),
+                .or_else(|| non_empty("NEXT_PUBLIC_SUPABASE_URL"))
+                .or_else(|| Some(DEFAULT_PUBLIC_SUPABASE_URL.to_string())),
             supabase_anon_key: non_empty("SUPABASE_ANON_KEY")
                 .or_else(|| non_empty("NEXT_PUBLIC_SUPABASE_ANON_KEY"))
-                .or_else(|| non_empty("SUPABASE_PUBLISHABLE_KEY")),
+                .or_else(|| non_empty("SUPABASE_PUBLISHABLE_KEY"))
+                .or_else(|| Some(DEFAULT_PUBLIC_SUPABASE_ANON_KEY.to_string())),
             supabase_service_key: non_empty("SUPABASE_SERVICE_ROLE_KEY")
                 .or_else(|| non_empty("SUPABASE_SECRET_KEY")),
             gemini_api_key: non_empty("GEMINI_API_KEY"),
@@ -209,6 +214,40 @@ fn default_confidence() -> String {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiagramNode {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_layer")]
+    pub layer: String,
+    #[serde(default)]
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+fn default_layer() -> String {
+    "CORE".to_string()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiagramEdge {
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CodebaseDiagram {
+    #[serde(default)]
+    pub architecture_summary: String,
+    #[serde(default)]
+    pub nodes: Vec<DiagramNode>,
+    #[serde(default)]
+    pub edges: Vec<DiagramEdge>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuditReport {
     #[serde(default)]
     pub scan_id: Option<String>,
@@ -230,6 +269,8 @@ pub struct AuditReport {
     pub cves_checked: usize,
     pub source_origin: String,
     pub findings: Vec<VulnerabilityFinding>,
+    #[serde(default)]
+    pub diagram: Option<CodebaseDiagram>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -929,6 +970,7 @@ pub async fn run_gemini_argon_audit(
             cves_checked: cves.len(),
             source_origin: snapshot.source_origin.clone(),
             findings: vec![],
+            diagram: None,
         };
     }
 
@@ -1084,6 +1126,7 @@ async fn call_gemini_argon_api(
                 cves_checked: cves.len(),
                 source_origin: snapshot.source_origin.clone(),
                 findings: parsed.findings,
+                diagram: None,
             });
         }
     }
@@ -1296,7 +1339,254 @@ fn synthesize_live_repo_audit(
         cves_checked: cves.len(),
         source_origin: snapshot.source_origin.clone(),
         findings,
+        diagram: None,
     }
+}
+
+// ============================================================================
+// 5B. GEMINI 4 ARGON COMPONENT FLOW DIAGRAM GENERATOR
+// ============================================================================
+
+pub async fn generate_codebase_diagram(
+    client: &Client,
+    config: &AppConfig,
+    snapshot: &RepoSnapshot,
+) -> CodebaseDiagram {
+    if let Some(api_key) = &config.gemini_api_key {
+        if let Some(live_diag) = call_gemini_diagram_api(client, config, api_key, snapshot).await {
+            if !live_diag.nodes.is_empty() {
+                return live_diag;
+            }
+        }
+    }
+    build_fallback_diagram_from_snapshot(snapshot)
+}
+
+async fn call_gemini_diagram_api(
+    client: &Client,
+    config: &AppConfig,
+    api_key: &str,
+    snapshot: &RepoSnapshot,
+) -> Option<CodebaseDiagram> {
+    let mut repo_context = String::with_capacity(snapshot.total_bytes_loaded.min(400_000) + 4096);
+    for file in &snapshot.files {
+        repo_context.push_str(&format!("\n--- FILE: {} ---\n", file.path));
+        let snippet: String = file.content.chars().take(12_000).collect();
+        repo_context.push_str(&snippet);
+    }
+
+    let prompt = format!(
+        "You are Buzz, an expert software architect powered by Gemini 4 Argon.\n\
+         Analyze the repository `{repo}` ({file_count} files) loaded in your 1M context window and generate a clear, high-signal Component Flow Diagram.\n\
+         Identify 4 to 6 major architectural components (`nodes`) and the directional data/control flows (`edges`) between them.\n\
+         Each node's `layer` MUST be one of: `FRONTEND`, `API`, `CORE`, or `DATA`.\n\
+         Each node's `files` array MUST list actual file paths from `{repo}` that belong to that component.\n\
+         Each edge MUST have `from` (source node `id`), `to` (target node `id`), and `label` (concise description of the request/data/event flowing along the arrow).\n\n\
+         Return strictly valid JSON matching this schema:\n\
+         {{\"architecture_summary\": \"string\", \
+         \"nodes\": [{{\"id\": \"comp_1\", \"label\": \"Component Name\", \"layer\": \"FRONTEND|API|CORE|DATA\", \"files\": [\"path/to/file\"], \"description\": \"1-sentence role in the system\"}}], \
+         \"edges\": [{{\"from\": \"comp_1\", \"to\": \"comp_2\", \"label\": \"HTMX POST / JSON / SQL / Auth flow\"}}]}}\n\n\
+         === REPOSITORY FILES ({repo}) ===\n{context}",
+        repo = snapshot.full_name,
+        file_count = snapshot.files.len(),
+        context = repo_context
+    );
+
+    let candidate_models = [
+        config.gemini_model.as_str(),
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
+    ];
+
+    let payload = serde_json::json!({
+        "contents": [{ "parts": [{ "text": prompt }] }],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json"
+        }
+    });
+
+    for model_id in candidate_models {
+        let url = format!(
+            "{}/models/{}:generateContent?key={}",
+            config.gemini_api_base.trim_end_matches('/'),
+            model_id,
+            api_key
+        );
+
+        let Ok(resp) = client
+            .post(&url)
+            .header("x-goog-api-key", api_key)
+            .json(&payload)
+            .send()
+            .await
+        else {
+            continue;
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let Ok(body) = resp.json::<serde_json::Value>().await else {
+            continue;
+        };
+        let Some(raw_text) = body
+            .pointer("/candidates/0/content/parts/0/text")
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        let cleaned = strip_markdown_fences(raw_text);
+        if let Ok(parsed) = serde_json::from_str::<CodebaseDiagram>(cleaned) {
+            if !parsed.nodes.is_empty() {
+                return Some(parsed);
+            }
+        }
+    }
+
+    None
+}
+
+fn build_fallback_diagram_from_snapshot(snapshot: &RepoSnapshot) -> CodebaseDiagram {
+    let mut frontend_files = Vec::new();
+    let mut api_files = Vec::new();
+    let mut core_files = Vec::new();
+    let mut data_files = Vec::new();
+
+    for f in &snapshot.files {
+        let p = f.path.to_ascii_lowercase();
+        if p.starts_with("public/")
+            || p.starts_with("web/")
+            || p.starts_with("client/")
+            || p.ends_with(".html")
+            || p.ends_with(".css")
+            || p.ends_with(".tsx")
+            || p.ends_with(".jsx")
+        {
+            frontend_files.push(f.path.clone());
+        } else if p.starts_with("api/")
+            || p.contains("route")
+            || p.contains("controller")
+            || p.contains("handler")
+        {
+            api_files.push(f.path.clone());
+        } else if p.starts_with("supabase/")
+            || p.ends_with(".sql")
+            || p.contains("schema")
+            || p.contains("db")
+            || p.contains("model")
+        {
+            data_files.push(f.path.clone());
+        } else {
+            core_files.push(f.path.clone());
+        }
+    }
+
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    if !frontend_files.is_empty() {
+        nodes.push(DiagramNode {
+            id: "ui_layer".to_string(),
+            label: "Client UI & Interaction Layer".to_string(),
+            layer: "FRONTEND".to_string(),
+            files: frontend_files.into_iter().take(5).collect(),
+            description: "Renders the user interface, manages auth session state, and dispatches requests to backend endpoints.".to_string(),
+        });
+    }
+
+    if !api_files.is_empty() {
+        nodes.push(DiagramNode {
+            id: "api_layer".to_string(),
+            label: "Serverless API & Route Handlers".to_string(),
+            layer: "API".to_string(),
+            files: api_files.into_iter().take(6).collect(),
+            description: "Validates incoming requests, enforces auth headers, and orchestrates core application workflows.".to_string(),
+        });
+    }
+
+    nodes.push(DiagramNode {
+        id: "core_engine".to_string(),
+        label: "Core Domain & Analysis Engine".to_string(),
+        layer: "CORE".to_string(),
+        files: if core_files.is_empty() {
+            snapshot.files.iter().take(4).map(|f| f.path.clone()).collect()
+        } else {
+            core_files.into_iter().take(6).collect()
+        },
+        description: format!(
+            "Core business logic, external API integrations, and processing pipeline for `{}`.",
+            snapshot.full_name
+        ),
+    });
+
+    if !data_files.is_empty() {
+        nodes.push(DiagramNode {
+            id: "data_layer".to_string(),
+            label: "Persistence & External Datastores".to_string(),
+            layer: "DATA".to_string(),
+            files: data_files.into_iter().take(5).collect(),
+            description: "Database schema, persisted records, and external data integrations.".to_string(),
+        });
+    }
+
+    // Connect nodes sequentially with meaningful flow labels
+    for window in nodes.windows(2) {
+        let from = &window[0];
+        let to = &window[1];
+        let label = match (from.layer.as_str(), to.layer.as_str()) {
+            ("FRONTEND", "API") => "HTTP / HTMX Requests + Auth Headers",
+            ("FRONTEND", "CORE") => "Client Events & Invocations",
+            ("API", "CORE") => "Validated Commands & Context Payload",
+            ("CORE", "DATA") => "SQL / REST Persistence & Queries",
+            _ => "Component Data & Control Flow",
+        };
+        edges.push(DiagramEdge {
+            from: from.id.clone(),
+            to: to.id.clone(),
+            label: label.to_string(),
+        });
+    }
+
+    CodebaseDiagram {
+        architecture_summary: format!(
+            "Component flow architecture of `{}` across {} inspected files, tracing request ingress from entrypoints through core domain logic and persistence.",
+            snapshot.full_name,
+            snapshot.files.len()
+        ),
+        nodes,
+        edges,
+    }
+}
+
+pub async fn save_diagram_to_scan(
+    client: &Client,
+    config: &AppConfig,
+    scan_id: &str,
+    diagram: &CodebaseDiagram,
+) {
+    let trimmed = scan_id.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
+        return;
+    };
+    let url = format!(
+        "{}/rest/v1/scans?id=eq.{}",
+        base_url.trim_end_matches('/'),
+        urlencoding_simple(trimmed)
+    );
+    let payload = serde_json::json!({
+        "diagram_json": diagram
+    });
+    let _ = client
+        .patch(&url)
+        .header("apikey", api_key)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&payload)
+        .send()
+        .await;
 }
 
 // ============================================================================
@@ -1335,7 +1625,8 @@ pub async fn persist_scan_report(
         "total_bytes_loaded": report.total_bytes_loaded,
         "estimated_tokens": report.estimated_tokens,
         "inspected_file_paths": report.inspected_file_paths,
-        "cves_checked": report.cves_checked
+        "cves_checked": report.cves_checked,
+        "diagram_json": report.diagram
     });
 
     if let Ok(resp) = client
@@ -1465,6 +1756,11 @@ pub async fn fetch_user_saved_scans(
         .filter(|s| !s.is_empty() && s.len() == 36);
     let clean_gh_user = github_user.map(|s| s.trim()).filter(|s| !s.is_empty());
 
+    // Never return saved audits in a logged-out state
+    if clean_uid.is_none() && clean_gh_user.is_none() {
+        return Vec::new();
+    }
+
     let mut url = format!(
         "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&order=created_at.desc&limit=15",
         base_url.trim_end_matches('/')
@@ -1492,21 +1788,26 @@ pub async fn fetch_user_saved_scans(
         }
     }
 
-    // Fallback: return most recent scans if user-specific filter returned none yet
-    let recent_url = format!(
-        "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&order=created_at.desc&limit=10",
-        base_url.trim_end_matches('/')
-    );
-    if let Ok(resp) = client
-        .get(&recent_url)
-        .header("apikey", api_key)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .send()
-        .await
-    {
-        if resp.status().is_success() {
-            if let Ok(rows) = resp.json::<Vec<SavedScanSummary>>().await {
-                return rows;
+    // If user_id query returned empty (e.g. earlier scans saved under github_user only), check github_user
+    if clean_uid.is_some() {
+        if let Some(gh) = clean_gh_user {
+            let gh_url = format!(
+                "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&github_user=eq.{}&order=created_at.desc&limit=15",
+                base_url.trim_end_matches('/'),
+                urlencoding_simple(gh)
+            );
+            if let Ok(resp) = client
+                .get(&gh_url)
+                .header("apikey", api_key)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    if let Ok(rows) = resp.json::<Vec<SavedScanSummary>>().await {
+                        return rows;
+                    }
+                }
             }
         }
     }
@@ -1584,6 +1885,11 @@ pub async fn fetch_saved_scan_by_id(
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize;
 
+    let diagram: Option<CodebaseDiagram> = scan
+        .get("diagram_json")
+        .filter(|v| !v.is_null())
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
     Some(AuditReport {
         scan_id: Some(clean_id),
         repo_full_name: scan
@@ -1634,6 +1940,7 @@ pub async fn fetch_saved_scan_by_id(
             .unwrap_or(0) as usize,
         source_origin: "Saved Supabase Audit Record".to_string(),
         findings,
+        diagram,
     })
 }
 
@@ -2480,9 +2787,359 @@ async fn synthesize_patched_file(
 
 pub mod templates {
     use super::{
-        compute_patch_signature, AppConfig, AuditReport, CveRecord, GitHubRepoItem,
-        PullRequestOutcome, SavedScanSummary,
+        compute_patch_signature, AppConfig, AuditReport, CodebaseDiagram, CveRecord,
+        GitHubRepoItem, PullRequestOutcome, SavedScanSummary,
     };
+
+    pub fn render_component_diagram(repo_full_name: &str, diagram: &CodebaseDiagram) -> String {
+        let count = diagram.nodes.len().max(1);
+
+        // 2D Constellation Coordinates across the 880x520 Neural Map Canvas
+        let preset_coords: &[(f32, f32)] = match count {
+            1 => &[(440.0, 260.0)],
+            2 => &[(240.0, 260.0), (640.0, 260.0)],
+            3 => &[(195.0, 170.0), (685.0, 170.0), (440.0, 390.0)],
+            4 => &[
+                (190.0, 155.0),
+                (690.0, 145.0),
+                (215.0, 385.0),
+                (665.0, 385.0),
+            ],
+            5 => &[
+                (170.0, 150.0),
+                (440.0, 115.0),
+                (710.0, 150.0),
+                (635.0, 395.0),
+                (245.0, 395.0),
+            ],
+            _ => &[
+                (165.0, 145.0),
+                (440.0, 110.0),
+                (715.0, 145.0),
+                (705.0, 385.0),
+                (440.0, 415.0),
+                (175.0, 385.0),
+            ],
+        };
+
+        let mut node_positions: Vec<(String, f32, f32, u32, &str, &str)> = Vec::new();
+        for (idx, node) in diagram.nodes.iter().take(6).enumerate() {
+            let (cx, cy) = preset_coords[idx % preset_coords.len()];
+            let deg_count = diagram
+                .edges
+                .iter()
+                .filter(|e| e.from == node.id || e.to == node.id)
+                .count() as u32;
+            let layer_upper = node.layer.to_uppercase();
+            let base_heat: u32 = match layer_upper.as_str() {
+                "CORE" => 86,
+                "API" | "ROUTE" | "ROUTES" => 82,
+                "DATA" | "DB" | "DATABASE" => 74,
+                _ => 66,
+            };
+            let heat_score = (base_heat + deg_count * 4 + (node.files.len() as u32 * 2)).min(99);
+            let (bloom_id, stroke_hex, heat_class) = match heat_score {
+                88..=100 => ("heat-bloom-critical", "#FF2E63", "heat-critical"),
+                78..=87 => ("heat-bloom-high", "#FF8C32", "heat-high"),
+                68..=77 => ("heat-bloom-warm", "#FFE047", "heat-warm"),
+                _ => ("heat-bloom-cool", "#00F5D4", "heat-cool"),
+            };
+            node_positions.push((node.id.clone(), cx, cy, heat_score, bloom_id, stroke_hex));
+            let _ = heat_class;
+        }
+
+        // 1. SVG Layer 1: Thermal Aura Blooms (fMRI / Infrared Heat Field)
+        let mut svg_heat_blooms = String::new();
+        for (_, cx, cy, heat_score, bloom_id, _) in &node_positions {
+            let bloom_r = 85.0 + (*heat_score as f32 * 0.55);
+            svg_heat_blooms.push_str(&format!(
+                r##"<circle class="neural-aura-pulse" cx="{cx:.1}" cy="{cy:.1}" r="{r:.1}" fill="url(#{bloom_id})" filter="url(#thermal-glow)" />"##,
+                cx = cx,
+                cy = cy,
+                r = bloom_r,
+                bloom_id = bloom_id
+            ));
+        }
+
+        // 2. SVG Layer 2: Curved Bezier Synaptic Axons & Directional Action-Potential Pulses
+        let mut svg_axons = String::new();
+        let mut effective_edges = diagram.edges.clone();
+        if effective_edges.is_empty() && diagram.nodes.len() >= 2 {
+            for win in diagram.nodes.windows(2) {
+                effective_edges.push(super::DiagramEdge {
+                    from: win[0].id.clone(),
+                    to: win[1].id.clone(),
+                    label: "Synaptic Dataflow".to_string(),
+                });
+            }
+        }
+
+        for (e_idx, edge) in effective_edges.iter().enumerate() {
+            let Some((_, x1, y1, _, _, _)) =
+                node_positions.iter().find(|(id, ..)| *id == edge.from)
+            else {
+                continue;
+            };
+            let Some((_, x2, y2, _, _, _)) =
+                node_positions.iter().find(|(id, ..)| *id == edge.to)
+            else {
+                continue;
+            };
+
+            let dx = *x2 - *x1;
+            let dy = *y2 - *y1;
+            let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+            let ux = dx / dist;
+            let uy = dy / dist;
+
+            // Start at outer rim of source node (32px) and end at outer rim of target node (38px)
+            let sx = *x1 + ux * 32.0;
+            let sy = *y1 + uy * 32.0;
+            let ex = *x2 - ux * 38.0;
+            let ey = *y2 - uy * 38.0;
+
+            // Perpendicular curve offset for organic neural axon look
+            let nx = -uy;
+            let ny = ux;
+            let bend = if e_idx % 2 == 0 { 34.0 } else { -34.0 };
+            let qx = (*x1 + *x2) * 0.5 + nx * bend;
+            let qy = (*y1 + *y2) * 0.5 + ny * bend;
+
+            // Midpoint on quadratic Bezier (t = 0.5) for label badge
+            let mx = 0.25 * sx + 0.5 * qx + 0.25 * ex;
+            let my = 0.25 * sy + 0.5 * qy + 0.25 * ey;
+
+            let short_label: String = edge.label.chars().take(28).collect();
+            let badge_w = (short_label.len() as f32 * 6.4 + 16.0).max(64.0);
+            let bx = mx - badge_w * 0.5;
+            let by = my - 10.0;
+
+            svg_axons.push_str(&format!(
+                r##"<g class="neural-synapse-group">
+                    <path d="M {sx:.1} {sy:.1} Q {qx:.1} {qy:.1} {ex:.1} {ey:.1}" fill="none" stroke="#FF2E63" stroke-width="6" opacity="0.26" filter="url(#synapse-glow)" />
+                    <path d="M {sx:.1} {sy:.1} Q {qx:.1} {qy:.1} {ex:.1} {ey:.1}" fill="none" stroke="url(#synapse-grad)" stroke-width="2.4" marker-end="url(#neural-arrow)" />
+                    <path class="synapse-axon-pulse" d="M {sx:.1} {sy:.1} Q {qx:.1} {qy:.1} {ex:.1} {ey:.1}" fill="none" stroke="#FFF7D6" stroke-width="2.2" />
+                    <rect x="{bx:.1}" y="{by:.1}" width="{bw:.1}" height="19" rx="2" fill="#090418" stroke="#9D4EDD" stroke-width="1.5" opacity="0.92" />
+                    <text x="{mx:.1}" y="{ty:.1}" text-anchor="middle" fill="#FFE047" font-family="JetBrains Mono, monospace" font-size="9.5">{label}</text>
+                </g>"##,
+                sx = sx,
+                sy = sy,
+                qx = qx,
+                qy = qy,
+                ex = ex,
+                ey = ey,
+                bx = bx,
+                by = by,
+                bw = badge_w,
+                mx = mx,
+                ty = my + 3.0,
+                label = escape_html(&short_label)
+            ));
+        }
+
+        // 3. SVG Layer 3 & 4: Satellite File Neurons (Dendrites) + Major Neural Hub Cores
+        let mut svg_dendrites = String::new();
+        let mut svg_hubs = String::new();
+        let mut summary_cards_html = String::new();
+
+        let sat_angles: [f32; 5] = [-2.35, -1.15, 0.35, 1.25, 2.45];
+
+        for (idx, node) in diagram.nodes.iter().take(6).enumerate() {
+            let (_, cx, cy, heat_score, _, stroke_hex) = node_positions[idx];
+            let heat_class = match heat_score {
+                88..=100 => "heat-critical",
+                78..=87 => "heat-high",
+                68..=77 => "heat-warm",
+                _ => "heat-cool",
+            };
+
+            // Render satellite file neurons around this hub
+            let mut file_pills = String::new();
+            for (f_idx, fp) in node.files.iter().take(5).enumerate() {
+                file_pills.push_str(&format!(
+                    r#"<span class="diag-file-pill">{f}</span>"#,
+                    f = escape_html(fp)
+                ));
+
+                let angle = sat_angles[f_idx % sat_angles.len()] + (idx as f32 * 0.35);
+                let sat_dist = 66.0;
+                let fx = (cx + angle.cos() * sat_dist).clamp(48.0, 832.0);
+                let fy = (cy + angle.sin() * sat_dist).clamp(32.0, 488.0);
+                let short_file = fp.rsplit('/').next().unwrap_or(fp.as_str());
+                let short_file_trunc: String = short_file.chars().take(16).collect();
+
+                svg_dendrites.push_str(&format!(
+                    r##"<g class="file-dendrite-node">
+                        <line x1="{cx:.1}" y1="{cy:.1}" x2="{fx:.1}" y2="{fy:.1}" stroke="{stroke}" stroke-width="1.3" stroke-dasharray="3 3" opacity="0.65" />
+                        <circle cx="{fx:.1}" cy="{fy:.1}" r="12" fill="{stroke}" opacity="0.18" />
+                        <circle cx="{fx:.1}" cy="{fy:.1}" r="4.5" fill="#FFF7D6" stroke="{stroke}" stroke-width="1.8" />
+                        <text x="{fx:.1}" y="{ty:.1}" text-anchor="middle" fill="#D9E6FF" font-family="JetBrains Mono, monospace" font-size="8.5">{fname}</text>
+                    </g>"##,
+                    cx = cx,
+                    cy = cy,
+                    fx = fx,
+                    fy = fy,
+                    stroke = stroke_hex,
+                    ty = fy - 8.0,
+                    fname = escape_html(&short_file_trunc)
+                ));
+            }
+
+            let layer_upper = node.layer.to_uppercase();
+            let short_title: String = node.label.chars().take(24).collect();
+            let label_w = (short_title.len() as f32 * 7.2 + 20.0).max(110.0);
+            let lx = cx - label_w * 0.5;
+            let ly = cy + 34.0;
+
+            svg_hubs.push_str(&format!(
+                r##"<g class="neural-hub-node">
+                    <circle class="neural-ring-spin" cx="{cx:.1}" cy="{cy:.1}" r="33" fill="none" stroke="{stroke}" stroke-width="1.8" opacity="0.85" />
+                    <circle cx="{cx:.1}" cy="{cy:.1}" r="25" fill="#0B0418" stroke="{stroke}" stroke-width="3" />
+                    <circle cx="{cx:.1}" cy="{cy:.1}" r="9" fill="{stroke}" opacity="0.35" />
+                    <text x="{cx:.1}" y="{cy_top:.1}" text-anchor="middle" fill="#FFF7D6" font-family="Press Start 2P, monospace" font-size="8.5">{heat}°</text>
+                    <text x="{cx:.1}" y="{cy_bot:.1}" text-anchor="middle" fill="{stroke}" font-family="JetBrains Mono, monospace" font-weight="600" font-size="7.5">{layer}</text>
+                    <rect x="{lx:.1}" y="{ly:.1}" width="{lw:.1}" height="20" rx="2" fill="#070312" stroke="{stroke}" stroke-width="1.5" />
+                    <text x="{cx:.1}" y="{ly_text:.1}" text-anchor="middle" fill="#F2F6FF" font-family="JetBrains Mono, monospace" font-weight="600" font-size="10">{title}</text>
+                </g>"##,
+                cx = cx,
+                cy = cy,
+                stroke = stroke_hex,
+                cy_top = cy - 2.0,
+                cy_bot = cy + 10.0,
+                heat = heat_score,
+                layer = escape_html(&layer_upper),
+                lx = lx,
+                ly = ly,
+                lw = label_w,
+                ly_text = ly + 13.5,
+                title = escape_html(&short_title)
+            ));
+
+            summary_cards_html.push_str(&format!(
+                r#"<div class="neural-node-summary-card {heat_class}">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+                        <span style="font-weight:600;color:var(--text-main);font-size:0.88rem;">{title}</span>
+                        <span class="neural-heat-pill {heat_class}">{heat}° {layer}</span>
+                    </div>
+                    <p style="font-size:0.78rem;color:var(--text-muted);line-height:1.45;">{desc}</p>
+                    <div class="diag-files-row">{files}</div>
+                </div>"#,
+                heat_class = heat_class,
+                title = escape_html(&node.label),
+                heat = heat_score,
+                layer = escape_html(&layer_upper),
+                desc = escape_html(&node.description),
+                files = file_pills
+            ));
+        }
+
+        format!(
+            r##"<div class="neural-map-card">
+                <div class="report-Banner-top" style="margin-bottom:14px;padding-bottom:12px;border-bottom-color:#3a1c5c;">
+                    <div>
+                        <div class="report-repo-title" style="color:#FF2E63;">
+                            🧠 HEAT-SATURATED NEURAL ARCHITECTURE MAP // {repo}
+                        </div>
+                        <p style="font-family:var(--font-code);font-size:0.84rem;color:var(--text-muted);margin-top:4px;">
+                            {summary}
+                        </p>
+                    </div>
+                </div>
+
+                <div class="neural-map-viewport">
+                    <svg class="neural-map-svg" viewBox="0 0 880 520" role="img" aria-label="Heat-Saturated Codebase Neural Map">
+                        <defs>
+                            <filter id="thermal-glow" x="-40%" y="-40%" width="180%" height="180%">
+                                <feGaussianBlur stdDeviation="22" result="blur" />
+                            </filter>
+                            <filter id="synapse-glow" x="-20%" y="-20%" width="140%" height="140%">
+                                <feGaussianBlur stdDeviation="4" result="blur" />
+                            </filter>
+
+                            <!-- Thermal Radial Heat Gradients (fMRI / Infrared Spectrum) -->
+                            <radialGradient id="heat-bloom-critical" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#FFF7D6" stop-opacity="0.72" />
+                                <stop offset="28%" stop-color="#FF2E63" stop-opacity="0.52" />
+                                <stop offset="65%" stop-color="#9D0208" stop-opacity="0.22" />
+                                <stop offset="100%" stop-color="#05020D" stop-opacity="0" />
+                            </radialGradient>
+                            <radialGradient id="heat-bloom-high" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#FFE047" stop-opacity="0.65" />
+                                <stop offset="35%" stop-color="#FF7B00" stop-opacity="0.44" />
+                                <stop offset="70%" stop-color="#6A040F" stop-opacity="0.18" />
+                                <stop offset="100%" stop-color="#05020D" stop-opacity="0" />
+                            </radialGradient>
+                            <radialGradient id="heat-bloom-warm" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#FFE047" stop-opacity="0.55" />
+                                <stop offset="40%" stop-color="#9D4EDD" stop-opacity="0.40" />
+                                <stop offset="75%" stop-color="#3C096C" stop-opacity="0.16" />
+                                <stop offset="100%" stop-color="#05020D" stop-opacity="0" />
+                            </radialGradient>
+                            <radialGradient id="heat-bloom-cool" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#00F5D4" stop-opacity="0.52" />
+                                <stop offset="45%" stop-color="#3A86FF" stop-opacity="0.32" />
+                                <stop offset="100%" stop-color="#05020D" stop-opacity="0" />
+                            </radialGradient>
+
+                            <linearGradient id="synapse-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stop-color="#00F5D4" />
+                                <stop offset="50%" stop-color="#FFE047" />
+                                <stop offset="100%" stop-color="#FF2E63" />
+                            </linearGradient>
+
+                            <marker id="neural-arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                <path d="M 0 1 L 10 5 L 0 9 z" fill="#FFE047" />
+                            </marker>
+                        </defs>
+
+                        <!-- Subtle Thermal Radar Grid & Concentric Field Rings -->
+                        <g stroke="#1B0E30" stroke-width="1" opacity="0.55">
+                            <line x1="0" y1="130" x2="880" y2="130" />
+                            <line x1="0" y1="260" x2="880" y2="260" />
+                            <line x1="0" y1="390" x2="880" y2="390" />
+                            <line x1="220" y1="0" x2="220" y2="520" />
+                            <line x1="440" y1="0" x2="440" y2="520" />
+                            <line x1="660" y1="0" x2="660" y2="520" />
+                            <circle cx="440" cy="260" r="110" fill="none" stroke-dasharray="4 6" />
+                            <circle cx="440" cy="260" r="220" fill="none" stroke-dasharray="4 6" />
+                            <circle cx="440" cy="260" r="330" fill="none" stroke-dasharray="4 6" />
+                        </g>
+
+                        <!-- 1. Thermal Heat Blooms -->
+                        {svg_heat_blooms}
+
+                        <!-- 2. Synaptic Axon Flow Pathways -->
+                        {svg_axons}
+
+                        <!-- 3. Satellite File Neurons & Dendrites -->
+                        {svg_dendrites}
+
+                        <!-- 4. Major Component Neural Hubs -->
+                        {svg_hubs}
+                    </svg>
+                </div>
+
+                <!-- Thermal Saturation Scale Bar -->
+                <div class="thermal-legend-bar">
+                    <span style="color:#00F5D4;">COOL PERIPHERAL (50°)</span>
+                    <div class="thermal-gradient-strip"></div>
+                    <span style="color:#FF2E63;">INCANDESCENT CORE (99° CRITICAL HEAT)</span>
+                </div>
+
+                <!-- Neural Node Breakdown Grid -->
+                <div class="neural-nodes-legend-grid">
+                    {summary_cards_html}
+                </div>
+            </div>"##,
+            repo = escape_html(repo_full_name),
+            summary = escape_html(&diagram.architecture_summary),
+            svg_heat_blooms = svg_heat_blooms,
+            svg_axons = svg_axons,
+            svg_dendrites = svg_dendrites,
+            svg_hubs = svg_hubs,
+            summary_cards_html = summary_cards_html
+        )
+    }
 
     pub fn render_saved_scans_list(scans: &[SavedScanSummary]) -> String {
         if scans.is_empty() {
@@ -2502,7 +3159,7 @@ pub mod templates {
             let date_clean = escape_html(&date_short.replace('T', " "));
 
             rows.push_str(&format!(
-                r##"<div class="saved-scan-row">
+                r##"<div class="saved-scan-row" data-scan-id="{scan_id}">
                     <div class="saved-scan-info">
                         <span class="grade-pill grade-{grade}">{grade}</span>
                         <div>
@@ -2514,12 +3171,17 @@ pub mod templates {
                         <button
                             type="button"
                             class="pixel-btn pixel-btn-sm"
-                            hx-get="/api/scans?id={scan_id}"
-                            hx-target="#report-container"
-                            hx-swap="innerHTML"
-                            hx-on::after-request="if(event.detail.successful) window.buzzGoToStep(4);"
+                            onclick="window.buzzLoadSavedScan('{scan_id}')"
                         >
                             VIEW
+                        </button>
+                        <button
+                            type="button"
+                            class="pixel-btn pixel-btn-sm"
+                            style="border-color:var(--buzz-cyan);color:var(--buzz-cyan);"
+                            onclick="window.buzzGenerateDiagramForAudit('{scan_id}', '{repo}')"
+                        >
+                            🎨 DIAGRAM
                         </button>
                         <button
                             type="button"
@@ -2617,7 +3279,9 @@ pub mod templates {
     }
 
     pub fn render_repo_selector(repos: &[GitHubRepoItem]) -> String {
-        let mut options = String::new();
+        let mut options = String::from(
+            r#"<option value="" selected disabled>Choose a repository...</option>"#,
+        );
         for repo in repos {
             let lang = repo.language.as_deref().unwrap_or("Code");
             let vis = if repo.private { "PRIVATE" } else { "PUBLIC" };
@@ -2629,11 +3293,16 @@ pub mod templates {
                 vis = vis
             ));
         }
+        options.push_str(
+            r#"<option value="__custom__">✎ Enter a custom repository (owner/repo)...</option>"#,
+        );
 
         format!(
-            r#"<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <label for="gh-repo-picker" style="font-size:0.72rem;color:var(--buzz-cyan);">YOUR GITHUB REPOS:</label>
-                <select id="gh-repo-picker" class="pixel-select" style="flex:1;" onchange="window.buzzSelectRepo(this.value)">
+            r#"<div style="display:flex;flex-direction:column;gap:8px;">
+                <label for="gh-repo-picker" style="font-size:0.72rem;color:var(--buzz-cyan);font-family:var(--font-display);">
+                    1. SELECT YOUR GITHUB REPOSITORY
+                </label>
+                <select id="gh-repo-picker" class="pixel-select" onchange="window.buzzOnRepoDropdownChange(this.value)">
                     {options}
                 </select>
             </div>"#,
@@ -2742,7 +3411,7 @@ pub mod templates {
                             <input type="hidden" name="line_reference" value="{line_ref}" />
                             <input type="hidden" name="remediation_patch" value="{patch}" />
                             <input type="hidden" name="patch_token" value="{patch_token}" />
-                            <button type="submit" class="pixel-btn pixel-btn-apply">
+                            <button type="button" class="pixel-btn pixel-btn-apply" onclick="return window.buzzApplyPatch(this, event);">
                                 ⚡ APPLY &amp; OPEN PR
                             </button>
                         </form>"##,
@@ -2829,8 +3498,20 @@ pub mod templates {
             r#"<span class="meta-tag">AUTO-COMPACT: STANDBY (&lt;1M)</span>"#.to_string()
         };
 
+        let scan_id_attr = escape_html(report.scan_id.as_deref().unwrap_or(""));
+        let diagram_html = if let Some(diag) = &report.diagram {
+            render_component_diagram(&report.repo_full_name, diag)
+        } else {
+            String::new()
+        };
+        let diagram_btn_label = if report.diagram.is_some() {
+            "🎨 REGENERATE DIAGRAM"
+        } else {
+            "🎨 CREATE CODEBASE DIAGRAM"
+        };
+
         format!(
-            r#"<div class="pixel-box-gold report-header-card">
+            r#"<div class="pixel-box-gold report-header-card" data-scan-id="{scan_id}" data-repo="{repo}">
                 <div class="report-Banner-top">
                     <div>
                         <div class="report-repo-title">⚡ LIVE REPO AUDIT // {repo}</div>
@@ -2843,6 +3524,14 @@ pub mod templates {
                             <span class="meta-tag">FINDINGS: {hits}</span>
                         </div>
                         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+                            <button
+                                type="button"
+                                class="pixel-btn pixel-btn-sm"
+                                style="border-color:var(--buzz-cyan);color:var(--buzz-cyan);"
+                                onclick="window.buzzGenerateDiagramForAudit('{scan_id}', '{repo}')"
+                            >
+                                {diagram_btn_label}
+                            </button>
                             <button
                                 type="button"
                                 class="pixel-btn pixel-btn-sm"
@@ -2899,10 +3588,17 @@ pub mod templates {
                 </details>
             </div>
 
+            <div id="diagram-section-slot">
+                {diagram_html}
+            </div>
+
             <div class="findings-grid">
                 {findings_html}
             </div>"#,
+            scan_id = scan_id_attr,
             repo = escape_html(&report.repo_full_name),
+            diagram_btn_label = diagram_btn_label,
+            diagram_html = diagram_html,
             branch = escape_html(&report.default_branch),
             sha = escape_html(&report.commit_sha),
             model = escape_html(&report.model_used),

@@ -7,7 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/assets/buzz-logo.svg" />
   <link rel="stylesheet" href="/css/pixel.css" />
   <!-- HTMX for server-rendered HTML fragments from Rust Vercel Functions -->
-  <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
   <!-- Supabase JS Client for GitHub OAuth -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug" crossorigin="anonymous"></script>
   <script src="/assets/refactor.js" defer></script>
@@ -16,14 +16,133 @@
   <!-- Pixelated Rain Animation Canvas over the Dark-to-Dark-Blue Gradient Fade -->
   <canvas id="pixel-rain-canvas" aria-hidden="true"></canvas>
 
+  <!-- Global Persistent User Auth Status Bar (Visible on Front Page & All Wizard Steps) -->
+  <header id="global-auth-bar" class="global-auth-bar">
+    <!-- Shown when signed out -->
+    <button
+      id="global-signin-btn"
+      type="button"
+      class="pixel-btn pixel-btn-sm"
+      onclick="window.buzzConnectGitHub()"
+    >
+      <span class="led-dot warn"></span>
+      <span>SIGN IN WITH GITHUB</span>
+    </button>
+
+    <!-- Shown when signed in via Supabase GitHub OAuth -->
+    <div id="global-user-pill" class="user-badge-pill" style="display: none;">
+      <img id="global-user-avatar" class="user-avatar-pixel" alt="GitHub Avatar" />
+      <span class="led-dot"></span>
+      <span id="global-user-label">@connected</span>
+      <button
+        type="button"
+        class="pixel-btn pixel-btn-sm"
+        style="padding: 4px 8px; font-size: 0.58rem;"
+        onclick="window.buzzGoToStep(2)"
+      >
+        MY REPOS &amp; AUDITS
+      </button>
+      <button
+        type="button"
+        class="pixel-btn pixel-btn-sm"
+        style="padding: 4px 8px; font-size: 0.58rem; border-color: var(--sev-critical); color: var(--sev-critical);"
+        onclick="window.buzzSignOutGitHub()"
+      >
+        SIGN OUT
+      </button>
+    </div>
+  </header>
+
   <main class="wizard-shell">
 
     <!-- ================================================================== -->
-    <!-- WIZARD PAGE 1: FRONT PAGE (JUST BUZZ LOGO + ANALYZE REPO BUTTON)   -->
+    <!-- WIZARD PAGE 1: FRONT PAGE (LARGE LOGO + PIXEL WIND + 3 CARDS)      -->
     <!-- ================================================================== -->
-    <section id="wizard-step-1" class="wizard-step active">
+    <section id="wizard-step-1" class="wizard-step wizard-step-front active">
       <div class="front-hero">
         <div class="front-logo-wrap">
+          <!-- Outer Circular Pixelated Wind Vortex (Clockwise stepped orbit) -->
+          <svg
+            class="pixel-wind-orbit-outer"
+            viewBox="0 0 64 64"
+            shape-rendering="crispEdges"
+            aria-hidden="true"
+          >
+            <!-- Top Arc Pixel Wind Gust -->
+            <rect x="24" y="2" width="12" height="1" fill="#7CE4FF" />
+            <rect x="20" y="3" width="6" height="1" fill="#D9E6FF" />
+            <rect x="36" y="3" width="6" height="1" fill="#48D1FF" />
+            <rect x="16" y="4" width="4" height="1" fill="#7CE4FF" />
+            <rect x="42" y="4" width="3" height="1" fill="#48D1FF" />
+            <rect x="14" y="6" width="2" height="1" fill="#D9E6FF" />
+            <!-- Wind curl tip -->
+            <rect x="15" y="7" width="2" height="1" fill="#7CE4FF" />
+            <rect x="17" y="6" width="1" height="1" fill="#FFFFFF" />
+
+            <!-- Right Arc Pixel Wind Gust -->
+            <rect x="60" y="24" width="1" height="12" fill="#7CE4FF" />
+            <rect x="59" y="20" width="1" height="6" fill="#48D1FF" />
+            <rect x="59" y="36" width="1" height="6" fill="#D9E6FF" />
+            <rect x="58" y="16" width="1" height="4" fill="#48D1FF" />
+            <rect x="58" y="42" width="1" height="4" fill="#7CE4FF" />
+            <rect x="56" y="46" width="2" height="1" fill="#D9E6FF" />
+            <rect x="55" y="44" width="1" height="2" fill="#FFFFFF" />
+
+            <!-- Bottom Arc Pixel Wind Gust -->
+            <rect x="28" y="61" width="12" height="1" fill="#7CE4FF" />
+            <rect x="22" y="60" width="6" height="1" fill="#48D1FF" />
+            <rect x="40" y="60" width="6" height="1" fill="#D9E6FF" />
+            <rect x="18" y="59" width="4" height="1" fill="#48D1FF" />
+            <rect x="46" y="58" width="3" height="1" fill="#7CE4FF" />
+            <rect x="47" y="56" width="2" height="1" fill="#FFFFFF" />
+
+            <!-- Left Arc Pixel Wind Gust -->
+            <rect x="3" y="26" width="1" height="12" fill="#D9E6FF" />
+            <rect x="4" y="20" width="1" height="6" fill="#7CE4FF" />
+            <rect x="4" y="38" width="1" height="6" fill="#48D1FF" />
+            <rect x="5" y="16" width="1" height="4" fill="#D9E6FF" />
+            <rect x="7" y="15" width="2" height="1" fill="#FFFFFF" />
+            <rect x="8" y="16" width="1" height="2" fill="#7CE4FF" />
+          </svg>
+
+          <!-- Inner Circular Pixelated Wind Swirl (Counter-clockwise stepped orbit) -->
+          <svg
+            class="pixel-wind-orbit-inner"
+            viewBox="0 0 64 64"
+            shape-rendering="crispEdges"
+            aria-hidden="true"
+          >
+            <!-- Upper-Right Inner Wind Ribbon -->
+            <rect x="38" y="8" width="6" height="1" fill="#B5F2FF" />
+            <rect x="44" y="9" width="4" height="1" fill="#48D1FF" />
+            <rect x="48" y="11" width="3" height="1" fill="#7CE4FF" />
+            <rect x="51" y="13" width="2" height="2" fill="#D9E6FF" />
+            <rect x="53" y="15" width="1" height="4" fill="#48D1FF" />
+            <rect x="50" y="10" width="1" height="1" fill="#FFE047" />
+
+            <!-- Lower-Right Inner Wind Ribbon -->
+            <rect x="54" y="38" width="1" height="6" fill="#7CE4FF" />
+            <rect x="52" y="44" width="1" height="4" fill="#D9E6FF" />
+            <rect x="49" y="48" width="3" height="1" fill="#48D1FF" />
+            <rect x="45" y="50" width="4" height="1" fill="#B5F2FF" />
+            <rect x="51" y="51" width="1" height="1" fill="#FFFFFF" />
+
+            <!-- Lower-Left Inner Wind Ribbon -->
+            <rect x="19" y="54" width="6" height="1" fill="#7CE4FF" />
+            <rect x="15" y="52" width="4" height="1" fill="#48D1FF" />
+            <rect x="12" y="49" width="3" height="1" fill="#D9E6FF" />
+            <rect x="10" y="45" width="1" height="4" fill="#B5F2FF" />
+            <rect x="13" y="52" width="1" height="1" fill="#FFE047" />
+
+            <!-- Upper-Left Inner Wind Ribbon -->
+            <rect x="9" y="19" width="1" height="6" fill="#B5F2FF" />
+            <rect x="10" y="15" width="1" height="4" fill="#7CE4FF" />
+            <rect x="12" y="12" width="3" height="1" fill="#D9E6FF" />
+            <rect x="15" y="10" width="5" height="1" fill="#48D1FF" />
+            <rect x="11" y="14" width="1" height="1" fill="#FFFFFF" />
+          </svg>
+
+          <!-- Large Floating Buzz Logo -->
           <img
             src="/assets/buzz-logo.svg"
             alt="Buzz Logo — Pixel Lightning Bolt with Two Dark Eyes Floating on a Cloud"
@@ -40,6 +159,111 @@
         >
           ⚡ ANALYZE REPO
         </button>
+
+        <!-- Three Separately Colored Feature Cards with Left Pixel Icons -->
+        <div class="front-features-grid">
+          <!-- Card 1: Gold — Deep 1M-Context Security Auditing -->
+          <article class="feature-pixel-card card-gold">
+            <div class="feature-icon-box" aria-hidden="true">
+              <!-- Pixel Shield + Lightning Scan Icon (24x24) -->
+              <svg class="feature-icon-svg" viewBox="0 0 24 24" shape-rendering="crispEdges">
+                <!-- Shield Dark Outline & Gold Rim -->
+                <rect x="5" y="2" width="14" height="2" fill="#FFE047" />
+                <rect x="3" y="4" width="2" height="8" fill="#FFE047" />
+                <rect x="19" y="4" width="2" height="8" fill="#FFE047" />
+                <rect x="5" y="4" width="14" height="8" fill="#2A1F08" />
+                <rect x="5" y="12" width="2" height="4" fill="#FFE047" />
+                <rect x="17" y="12" width="2" height="4" fill="#FFE047" />
+                <rect x="7" y="12" width="10" height="4" fill="#2A1F08" />
+                <rect x="7" y="16" width="2" height="3" fill="#FFE047" />
+                <rect x="15" y="16" width="2" height="3" fill="#FFE047" />
+                <rect x="9" y="16" width="6" height="3" fill="#2A1F08" />
+                <rect x="9" y="19" width="2" height="2" fill="#FFE047" />
+                <rect x="13" y="19" width="2" height="2" fill="#FFE047" />
+                <rect x="11" y="19" width="2" height="2" fill="#2A1F08" />
+                <rect x="11" y="21" width="2" height="2" fill="#FFE047" />
+                <!-- Inner Lightning Bolt & Scan Line inside Shield -->
+                <rect x="12" y="5" width="3" height="2" fill="#FFF8B8" />
+                <rect x="10" y="7" width="4" height="2" fill="#FFE047" />
+                <rect x="9" y="9" width="6" height="2" fill="#FFA800" />
+                <rect x="11" y="11" width="3" height="2" fill="#FFE047" />
+                <rect x="10" y="13" width="2" height="3" fill="#FFA800" />
+                <rect x="6" y="10" width="12" height="1" fill="#48D1FF" />
+              </svg>
+            </div>
+            <div>
+              <h2 class="feature-card-title">1M-CONTEXT CVE AUDITING</h2>
+              <p class="feature-card-desc">
+                Ingests your entire repository into Gemini 4 Argon's 1M context window to uncover real CVEs, CWEs, and deep code vulnerabilities.
+              </p>
+            </div>
+          </article>
+
+          <!-- Card 2: Green — Autonomous 1-Click Pull Request Remediation -->
+          <article class="feature-pixel-card card-green">
+            <div class="feature-icon-box" aria-hidden="true">
+              <!-- Pixel Git Pull Request Branch & Merge Patch Icon (24x24) -->
+              <svg class="feature-icon-svg" viewBox="0 0 24 24" shape-rendering="crispEdges">
+                <!-- Left Main Branch Node (Top) -->
+                <rect x="5" y="3" width="4" height="4" fill="#2EE68A" />
+                <rect x="6" y="4" width="2" height="2" fill="#051B10" />
+                <!-- Left Trunk Vertical Line -->
+                <rect x="6" y="7" width="2" height="10" fill="#2EE68A" />
+                <!-- Left Main Branch Node (Bottom) -->
+                <rect x="5" y="17" width="4" height="4" fill="#2EE68A" />
+                <rect x="6" y="18" width="2" height="2" fill="#051B10" />
+                <!-- PR Branch Curve to Right Node -->
+                <rect x="8" y="9" width="4" height="2" fill="#9EFFCE" />
+                <rect x="12" y="10" width="2" height="2" fill="#9EFFCE" />
+                <rect x="16" y="11" width="2" height="6" fill="#2EE68A" />
+                <!-- Right PR Target Node -->
+                <rect x="15" y="17" width="4" height="4" fill="#2EE68A" />
+                <rect x="16" y="18" width="2" height="2" fill="#051B10" />
+                <!-- Top-Right Sparkle / Patch '+' Badge -->
+                <rect x="16" y="4" width="2" height="6" fill="#FFE047" />
+                <rect x="14" y="6" width="6" height="2" fill="#FFE047" />
+              </svg>
+            </div>
+            <div>
+              <h2 class="feature-card-title">AUTONOMOUS PR REMEDIATION</h2>
+              <p class="feature-card-desc">
+                Synthesizes surgical security patches, automatically branches or forks the repo, and opens ready-to-merge GitHub Pull Requests.
+              </p>
+            </div>
+          </article>
+
+          <!-- Card 3: Cyan — Visual Codebase Architecture Diagrams -->
+          <article class="feature-pixel-card card-cyan">
+            <div class="feature-icon-box" aria-hidden="true">
+              <!-- Pixel Architecture Graph / Diagram Nodes Icon (24x24) -->
+              <svg class="feature-icon-svg" viewBox="0 0 24 24" shape-rendering="crispEdges">
+                <!-- Top Root Architecture Node -->
+                <rect x="8" y="2" width="8" height="5" fill="#48D1FF" />
+                <rect x="9" y="3" width="6" height="3" fill="#07192E" />
+                <rect x="10" y="4" width="4" height="1" fill="#FFE047" />
+                <!-- Connector Lines from Root to Child Nodes -->
+                <rect x="11" y="7" width="2" height="4" fill="#7CE4FF" />
+                <rect x="5" y="11" width="14" height="2" fill="#7CE4FF" />
+                <rect x="5" y="13" width="2" height="3" fill="#7CE4FF" />
+                <rect x="17" y="13" width="2" height="3" fill="#7CE4FF" />
+                <!-- Bottom-Left Module Node -->
+                <rect x="2" y="16" width="8" height="6" fill="#48D1FF" />
+                <rect x="3" y="17" width="6" height="4" fill="#07192E" />
+                <rect x="4" y="18" width="4" height="2" fill="#2EE68A" />
+                <!-- Bottom-Right Module Node -->
+                <rect x="14" y="16" width="8" height="6" fill="#48D1FF" />
+                <rect x="15" y="17" width="6" height="4" fill="#07192E" />
+                <rect x="16" y="18" width="4" height="2" fill="#FFE047" />
+              </svg>
+            </div>
+            <div>
+              <h2 class="feature-card-title">VISUAL CODEBASE DIAGRAMS</h2>
+              <p class="feature-card-desc">
+                Maps cross-file dataflows, trust boundaries, and dependency graphs into clear diagrams so you can understand any codebase fast.
+              </p>
+            </div>
+          </article>
+        </div>
       </div>
     </section>
 
@@ -59,133 +283,159 @@
       </div>
 
       <div class="pixel-box-gold">
-        <h2 class="wizard-title">CONNECT GITHUB &amp; PICK REPO</h2>
+        <h2 class="wizard-title">SELECT REPOSITORY TO AUDIT</h2>
         <p class="wizard-subtitle">
           Gemini 4 Argon will load your repository into its 1M context window and cross-reference against the CVEProject/cvelistV5 datasource.
         </p>
 
-        <!-- Supabase GitHub OAuth Connect & Sign Out Row -->
-        <div class="auth-bar-row">
+        <!-- Shown ONLY when logged out: requires GitHub login before scanning -->
+        <div
+          id="step2-logged-out-notice"
+          style="margin-top: 12px; padding: 18px; background: var(--terminal-bg); border: 2px dashed var(--border-blue); text-align: center;"
+        >
+          <div style="font-family: var(--font-display); font-size: 0.72rem; color: var(--buzz-yellow); margin-bottom: 8px;">
+            🔒 SIGN IN REQUIRED TO SCAN REPOSITORIES
+          </div>
+          <div style="font-family: var(--font-code); font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">
+            Connect your GitHub account to select a repository, run 1M-context CVE audits, and open Pull Request patches.
+          </div>
           <button
             id="github-auth-btn"
             type="button"
             class="pixel-btn pixel-btn-github"
-            style="flex: 1;"
             onclick="window.buzzConnectGitHub()"
           >
-            <span id="github-auth-dot" class="led-dot warn"></span>
-            <span id="github-auth-label">SIGN IN WITH GITHUB (SUPABASE AUTH)</span>
-          </button>
-
-          <button
-            id="github-signout-btn"
-            type="button"
-            class="pixel-btn pixel-btn-sm"
-            style="display: none; border-color: var(--sev-critical); color: var(--sev-critical);"
-            onclick="window.buzzSignOutGitHub()"
-          >
-            SIGN OUT
+            <span class="led-dot warn"></span>
+            <span>SIGN IN WITH GITHUB (SUPABASE AUTH)</span>
           </button>
         </div>
 
-        <!-- Connected GitHub Repo Dropdown Slot (populated via HTMX GET /api/repos) -->
-        <div
-          id="connected-repos-slot"
-          style="margin-top: 12px;"
-          hx-get="/api/repos"
-          hx-trigger="load"
-          hx-swap="innerHTML"
-        ></div>
+        <!-- Shown ONLY when signed in with GitHub -->
+        <div id="step2-authenticated-area" style="display: none;">
+          <!-- HTMX Form posting to Rust Vercel Function: POST /api/analyze -->
+          <form
+            id="analyze-form"
+            hx-post="/api/analyze"
+            hx-target="#report-container"
+            hx-swap="innerHTML"
+            hx-on::before-request="window.buzzStartAnalysisPage(event)"
+            hx-on::after-request="window.buzzFinishAnalysisPage(event)"
+          >
+            <!-- Connected GitHub Repo Dropdown Slot (Default: "Choose a repository...") -->
+            <div id="connected-repos-slot" style="margin-top: 8px;">
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <label for="gh-repo-picker" style="font-size:0.72rem;color:var(--buzz-cyan);font-family:var(--font-display);">
+                  1. SELECT YOUR GITHUB REPOSITORY
+                </label>
+                <select id="gh-repo-picker" class="pixel-select" onchange="window.buzzOnRepoDropdownChange(this.value)">
+                  <option value="" selected disabled>Choose a repository...</option>
+                  <option value="__custom__">✎ Enter a custom repository (owner/repo)...</option>
+                </select>
+              </div>
+            </div>
 
-        <div class="wizard-divider">— OR ENTER ANY GITHUB REPOSITORY —</div>
+            <!-- Opt-In Custom Repository Box (Hidden unless "✎ Enter a custom repository..." is selected) -->
+            <div
+              id="custom-repo-panel"
+              style="display: none; margin-top: 14px; padding: 14px; background: var(--terminal-bg); border: 2px dashed var(--border-blue);"
+            >
+              <label for="repo-input" style="display:block;font-size:0.68rem;color:var(--buzz-yellow);font-family:var(--font-display);margin-bottom:8px;">
+                CUSTOM PUBLIC REPOSITORY (OWNER/REPO)
+              </label>
+              <input
+                id="repo-input"
+                name="repo"
+                type="text"
+                class="pixel-input"
+                placeholder="owner/repo (e.g. expressjs/express)"
+                value=""
+                required
+                autocomplete="off"
+              />
 
-        <!-- HTMX Form posting to Rust Vercel Function: POST /api/analyze -->
-        <form
-          id="analyze-form"
-          hx-post="/api/analyze"
-          hx-target="#report-container"
-          hx-swap="innerHTML"
-          hx-on::before-request="window.buzzStartAnalysisPage()"
-          hx-on::after-request="window.buzzFinishAnalysisPage(event)"
-        >
-          <input
-            id="repo-input"
-            name="repo"
-            type="text"
-            class="pixel-input"
-            placeholder="owner/repo (e.g. nisargap/buzz)"
-            value="nisargap/buzz"
-            required
-            autocomplete="off"
-          />
+              <div class="preset-chips" style="margin-top: 10px;">
+                <button
+                  type="button"
+                  class="chip-btn"
+                  onclick="window.buzzSelectRepo('nisargap/buzz')"
+                >
+                  nisargap/buzz
+                </button>
+                <button
+                  type="button"
+                  class="chip-btn"
+                  onclick="window.buzzSelectRepo('expressjs/express')"
+                >
+                  expressjs/express
+                </button>
+                <button
+                  type="button"
+                  class="chip-btn"
+                  onclick="window.buzzSelectRepo('pallets/flask')"
+                >
+                  pallets/flask
+                </button>
+              </div>
+            </div>
 
-          <div class="preset-chips">
-            <button
-              type="button"
-              class="chip-btn"
-              onclick="window.buzzSelectRepo('nisargap/buzz')"
+            <!-- Explicit Active Target Readout -->
+            <div
+              id="selected-repo-readout"
+              style="margin-top: 12px; font-family: var(--font-code); font-size: 0.78rem; color: var(--text-muted);"
             >
-              nisargap/buzz
-            </button>
+              ACTIVE TARGET: <strong id="selected-repo-name" style="color: var(--buzz-yellow);">None selected (Choose a repository above)</strong>
+            </div>
+
+            <!-- Checkbox to Include Visual Codebase Component Flow Diagram -->
+            <label class="pixel-checkbox-label" for="include-diagram-checkbox">
+              <input
+                id="include-diagram-checkbox"
+                name="include_diagram"
+                type="checkbox"
+                value="true"
+                class="pixel-checkbox-input"
+                checked
+              />
+              <span>🎨 Generate Visual Heat-Saturated Neural Map of Codebase</span>
+            </label>
+
             <button
-              type="button"
-              class="chip-btn"
-              onclick="window.buzzSelectRepo('expressjs/express')"
+              type="submit"
+              class="pixel-btn pixel-btn-primary"
+              style="width: 100%; margin-top: 18px;"
             >
-              expressjs/express
+              ⚡ ANALYZE REPO IN 1M CONTEXT
             </button>
-            <button
-              type="button"
-              class="chip-btn"
-              onclick="window.buzzSelectRepo('pallets/flask')"
-            >
-              pallets/flask
-            </button>
-          </div>
+          </form>
 
           <button
-            type="submit"
-            class="pixel-btn pixel-btn-primary"
-            style="width: 100%; margin-top: 20px;"
+            id="refactor-open-btn"
+            type="button"
+            class="pixel-btn refactor-entry"
+            onclick="window.buzzOpenRefactor()"
           >
-            ⚡ ANALYZE REPO IN 1M CONTEXT
+            AUTO-REFACTOR
           </button>
-        </form>
+          <p class="refactor-entry-note">
+            Use this repository and your existing GitHub connection to review a small refactor before opening a draft PR.
+          </p>
 
-        <button
-          id="refactor-open-btn"
-          type="button"
-          class="pixel-btn refactor-entry"
-          onclick="window.buzzOpenRefactor()"
-        >
-          AUTO-REFACTOR
-        </button>
-        <p class="refactor-entry-note">
-          Use this repository and your existing GitHub connection to review a small refactor before opening a draft PR.
-        </p>
-
-        <!-- Persisted Repository Audits for the Logged-In User -->
-        <div class="saved-audits-panel">
-          <div class="saved-audits-header">
-            <span class="saved-audits-title">📂 SAVED REPOSITORY AUDITS</span>
-            <button
-              type="button"
-              class="pixel-btn pixel-btn-sm"
-              hx-get="/api/scans"
-              hx-target="#saved-audits-slot"
-              hx-swap="innerHTML"
-            >
-              ↻ REFRESH
-            </button>
-          </div>
-          <div
-            id="saved-audits-slot"
-            hx-get="/api/scans"
-            hx-trigger="load"
-            hx-swap="innerHTML"
-          >
-            <div style="font-size: 0.74rem; color: var(--text-dim);">
-              Loading saved repository audits...
+          <!-- Persisted Repository Audits (Strictly shown ONLY when signed in) -->
+          <div id="saved-audits-panel" class="saved-audits-panel">
+            <div class="saved-audits-header">
+              <span class="saved-audits-title">📂 YOUR SAVED REPOSITORY AUDITS</span>
+              <button
+                type="button"
+                class="pixel-btn pixel-btn-sm"
+                onclick="window.buzzRefreshSavedAudits()"
+              >
+                ↻ REFRESH
+              </button>
+            </div>
+            <div id="saved-audits-slot">
+              <div style="font-size: 0.74rem; color: var(--text-dim);">
+                Loading saved repository audits...
+              </div>
             </div>
           </div>
         </div>
@@ -441,6 +691,165 @@
             <div id="cve-crossref-ticker" class="cve-crossref-ticker">
               Inspecting dependency manifests &amp; AST call sites...
             </div>
+          </div>
+        </div>
+
+        <!-- Artist Buzz in a Beret Painting a Pixelated Canvas (Shown while creating Diagram) -->
+        <div id="buzz-painter-box" class="buzz-painter-box">
+          <svg
+            class="buzz-painter-scene-svg"
+            viewBox="0 0 56 44"
+            shape-rendering="crispEdges"
+            role="img"
+            aria-label="Buzz Lightning Bolt Wearing a Beret and Painting a Pixelated Codebase Diagram Canvas"
+          >
+            <!-- 1. Bouncing Artist Buzz (Lightning Bolt + French Beret + Palette + Paintbrush) -->
+            <g class="painter-bolt-bob">
+              <!-- Jaunty Crimson Pixel French Beret on Top of the Lightning Bolt -->
+              <!-- Beret Little Stem -->
+              <rect x="14" y="2" width="1" height="1" fill="#050711" />
+              <rect x="15" y="1" width="1" height="2" fill="#9D0208" />
+              <!-- Beret Dark Pixel Outline -->
+              <rect x="10" y="3" width="10" height="1" fill="#050711" />
+              <rect x="8" y="4" width="2" height="1" fill="#050711" />
+              <rect x="20" y="4" width="2" height="1" fill="#050711" />
+              <rect x="7" y="5" width="1" height="2" fill="#050711" />
+              <rect x="22" y="5" width="1" height="2" fill="#050711" />
+              <!-- Beret Crimson Puff Fill & Shading -->
+              <rect x="10" y="4" width="10" height="1" fill="#E63946" />
+              <rect x="8" y="5" width="14" height="1" fill="#E63946" />
+              <rect x="8" y="6" width="14" height="1" fill="#BA181B" />
+              <!-- Beret Highlight Pixel -->
+              <rect x="10" y="4" width="4" height="1" fill="#FF758F" />
+              <!-- Beret Dark Headband Rim -->
+              <rect x="10" y="7" width="11" height="1" fill="#141020" />
+
+              <!-- Lightning Bolt Body & Outline -->
+              <rect x="10" y="8" width="1" height="2" fill="#050711" />
+              <rect x="20" y="8" width="1" height="2" fill="#050711" />
+              <rect x="9" y="10" width="1" height="3" fill="#050711" />
+              <rect x="19" y="10" width="5" height="1" fill="#050711" />
+              <rect x="23" y="11" width="1" height="2" fill="#050711" />
+              <rect x="8" y="13" width="1" height="3" fill="#050711" />
+              <rect x="22" y="13" width="1" height="2" fill="#050711" />
+              <rect x="9" y="16" width="4" height="1" fill="#050711" />
+              <rect x="20" y="15" width="2" height="1" fill="#050711" />
+              <rect x="12" y="17" width="1" height="3" fill="#050711" />
+              <rect x="19" y="16" width="1" height="4" fill="#050711" />
+              <rect x="11" y="20" width="1" height="4" fill="#050711" />
+              <rect x="18" y="20" width="1" height="4" fill="#050711" />
+
+              <!-- Bolt Golden-Yellow Fill -->
+              <rect x="11" y="8" width="9" height="2" fill="#FFE047" />
+              <rect x="10" y="10" width="9" height="1" fill="#FFE047" />
+              <rect x="10" y="11" width="13" height="2" fill="#FFD026" />
+              <rect x="9" y="13" width="13" height="2" fill="#FFC312" />
+              <rect x="9" y="15" width="11" height="1" fill="#FFB100" />
+              <rect x="13" y="16" width="6" height="4" fill="#FFA000" />
+              <rect x="12" y="20" width="6" height="4" fill="#FF8F00" />
+
+              <!-- Two Dark Expressive Eyes Looking at the Canvas -->
+              <rect x="12" y="11" width="2" height="3" fill="#050711" />
+              <rect x="13" y="11" width="1" height="1" fill="#FFFFFF" />
+              <rect x="16" y="11" width="2" height="3" fill="#050711" />
+              <rect x="17" y="11" width="1" height="1" fill="#FFFFFF" />
+
+              <!-- Left Hand Holding Wooden Artist Palette with Paint Dabs -->
+              <rect x="5" y="17" width="6" height="1" fill="#050711" />
+              <rect x="4" y="18" width="1" height="4" fill="#050711" />
+              <rect x="11" y="18" width="1" height="4" fill="#050711" />
+              <rect x="5" y="22" width="6" height="1" fill="#050711" />
+              <rect x="5" y="18" width="6" height="4" fill="#D4A373" />
+              <!-- Paint Dabs on Palette (Cyan, Gold, Emerald, Coral) -->
+              <rect x="6" y="19" width="1" height="1" fill="#48D1FF" />
+              <rect x="8" y="18" width="1" height="1" fill="#FFE047" />
+              <rect x="9" y="20" width="1" height="1" fill="#2EE68A" />
+              <rect x="6" y="21" width="1" height="1" fill="#FF2E63" />
+
+              <!-- Right Animated Arm Sweeping a Pixel Paintbrush Across the Canvas -->
+              <g class="painter-brush-arm">
+                <!-- Pixel Arm -->
+                <rect x="19" y="18" width="4" height="2" fill="#FFE047" />
+                <rect x="19" y="17" width="4" height="1" fill="#050711" />
+                <!-- Wooden Paintbrush Handle -->
+                <rect x="23" y="17" width="4" height="1" fill="#9E6B43" />
+                <rect x="25" y="16" width="3" height="1" fill="#9E6B43" />
+                <!-- Silver Ferrule -->
+                <rect x="28" y="15" width="1" height="2" fill="#D9E6FF" />
+                <!-- Wet Cyan & Gold Paintbrush Bristles Touching Canvas -->
+                <rect x="29" y="14" width="2" height="2" fill="#48D1FF" />
+                <rect x="30" y="13" width="1" height="1" fill="#FFE047" />
+              </g>
+            </g>
+
+            <!-- 2. Fluffy Pixel Cloud Under Artist Buzz -->
+            <g id="painter-cloud">
+              <rect x="7" y="24" width="14" height="1" fill="#050711" />
+              <rect x="5" y="25" width="18" height="4" fill="#FFFFFF" />
+              <rect x="4" y="26" width="1" height="4" fill="#050711" />
+              <rect x="23" y="26" width="1" height="4" fill="#050711" />
+              <rect x="5" y="29" width="18" height="1" fill="#D9E6FF" />
+              <rect x="5" y="30" width="18" height="1" fill="#8FAEEB" />
+              <rect x="6" y="31" width="16" height="1" fill="#050711" />
+            </g>
+
+            <!-- 3. Pixelated Wooden Easel & Canvas Being Painted (Right Side) -->
+            <g id="pixel-easel-canvas">
+              <!-- Top Easel Clamp -->
+              <rect x="39" y="4" width="4" height="2" fill="#9E6B43" />
+              <rect x="38" y="3" width="6" height="1" fill="#050711" />
+
+              <!-- Canvas Frame Border -->
+              <rect x="30" y="6" width="22" height="1" fill="#050711" />
+              <rect x="29" y="7" width="1" height="19" fill="#050711" />
+              <rect x="52" y="7" width="1" height="19" fill="#050711" />
+              <rect x="30" y="26" width="22" height="1" fill="#050711" />
+
+              <!-- Pixelated Canvas Surface -->
+              <rect x="30" y="7" width="22" height="19" fill="#0D1936" />
+              <rect x="30" y="7" width="22" height="1" fill="#1E3366" />
+
+              <!-- Painted Stroke 1: Top Cyan Component Box on Canvas -->
+              <g class="canvas-stroke-1">
+                <rect x="37" y="9" width="8" height="4" fill="#48D1FF" />
+                <rect x="38" y="10" width="6" height="2" fill="#081329" />
+              </g>
+
+              <!-- Painted Stroke 2: Connecting Flow Arrows on Canvas -->
+              <g class="canvas-stroke-2">
+                <rect x="40" y="13" width="2" height="3" fill="#FFE047" />
+                <rect x="35" y="16" width="12" height="1" fill="#FFE047" />
+                <rect x="35" y="17" width="2" height="2" fill="#FFE047" />
+                <rect x="45" y="17" width="2" height="2" fill="#FFE047" />
+              </g>
+
+              <!-- Painted Stroke 3: Bottom Emerald & Gold Component Boxes on Canvas -->
+              <g class="canvas-stroke-3">
+                <rect x="32" y="19" width="7" height="5" fill="#2EE68A" />
+                <rect x="33" y="20" width="5" height="3" fill="#062115" />
+                <rect x="43" y="19" width="7" height="5" fill="#FFE047" />
+                <rect x="44" y="20" width="5" height="3" fill="#261F04" />
+              </g>
+
+              <!-- Wooden Easel Shelf & Tripod Legs -->
+              <rect x="28" y="27" width="26" height="2" fill="#9E6B43" />
+              <rect x="28" y="29" width="26" height="1" fill="#050711" />
+              <!-- Left Leg -->
+              <rect x="33" y="30" width="2" height="8" fill="#7F4F24" />
+              <rect x="32" y="38" width="2" height="3" fill="#7F4F24" />
+              <!-- Center Mast -->
+              <rect x="40" y="30" width="2" height="10" fill="#582F0E" />
+              <!-- Right Leg -->
+              <rect x="47" y="30" width="2" height="8" fill="#7F4F24" />
+              <rect x="48" y="38" width="2" height="3" fill="#7F4F24" />
+            </g>
+          </svg>
+
+          <div class="cve-crossref-title" style="color: var(--buzz-yellow);">
+            🎨 ARTIST BUZZ IS PAINTING YOUR COMPONENT FLOW DIAGRAM...
+          </div>
+          <div id="painter-status-ticker" class="cve-crossref-ticker" style="color: var(--buzz-cyan);">
+            Mapping architectural layers &amp; component flow arrows on canvas...
           </div>
         </div>
 
@@ -882,8 +1291,8 @@
       window.addEventListener('resize', resizeRain);
       setInterval(stepRain, 55);
 
-      // 2. Wizard Navigation Controller (auditing and review-first refactoring)
-      window.buzzGoToStep = function (stepNumber) {
+      // 2. Wizard Navigation & Persistent Browser State (audits and refactors)
+      window.buzzGoToStep = function (stepNumber, skipPersist) {
         [1, 2, 3, 4, 5].forEach(function (n) {
           const el = document.getElementById('wizard-step-' + n);
           if (el) {
@@ -894,9 +1303,30 @@
             }
           }
         });
+        if (!skipPersist) {
+          // Persist step (if refreshing during transient Step 3 loader, return to Step 2)
+          const stepToSave = stepNumber === 3 ? 2 : stepNumber;
+          localStorage.setItem('buzz_wizard_step', String(stepToSave));
+        }
         window.scrollTo({ top: 0, behavior: 'instant' });
         window.dispatchEvent(new CustomEvent('buzz:step-change', { detail: { step: stepNumber } }));
       };
+
+      function persistActiveReportState() {
+        const reportContainer = document.getElementById('report-container');
+        if (!reportContainer) return;
+        const html = reportContainer.innerHTML || '';
+        if (html.trim()) {
+          localStorage.setItem('buzz_active_report_html', html);
+          const headerCard = reportContainer.querySelector('[data-scan-id]');
+          if (headerCard) {
+            const scanId = headerCard.getAttribute('data-scan-id') || '';
+            const repoName = headerCard.getAttribute('data-repo') || '';
+            if (scanId) localStorage.setItem('buzz_active_scan_id', scanId);
+            if (repoName) localStorage.setItem('buzz_selected_repo', repoName);
+          }
+        }
+      }
 
       // 3. Exact Repository File Filter (matches src/lib.rs is_auditable_source_path)
       function isAuditableSourcePath(path) {
@@ -956,6 +1386,10 @@
         if (cveScanTimer) {
           clearInterval(cveScanTimer);
           cveScanTimer = null;
+        }
+        if (painterTimer) {
+          clearInterval(painterTimer);
+          painterTimer = null;
         }
       }
 
@@ -1022,11 +1456,58 @@
         logEl.scrollTop = logEl.scrollHeight;
       }
 
-      window.buzzStartAnalysisPage = async function () {
+      let painterTimer = null;
+      const PAINTER_STEPS = [
+        'Sketching FRONTEND & UI entrypoints on canvas...',
+        'Painting API route handlers & auth middleware nodes...',
+        'Drawing directional dataflow arrows between components...',
+        'Coloring CORE engine & DATA persistence layers...'
+      ];
+
+      window.buzzStartAnalysisPage = async function (event, options) {
+        if (!(githubUserHandle || githubProviderToken || supabaseUserId)) {
+          if (event && event.preventDefault) event.preventDefault();
+          await window.buzzConnectGitHub();
+          return;
+        }
         stopAllAnalysisTimers();
+        if (painterTimer) {
+          clearInterval(painterTimer);
+          painterTimer = null;
+        }
+
+        const isDiagramOnly = Boolean(options && options.diagramOnly);
+        const diagCheckbox = document.getElementById('include-diagram-checkbox');
+        const includeDiagram =
+          isDiagramOnly || Boolean(diagCheckbox && diagCheckbox.checked);
 
         const repoInput = document.getElementById('repo-input');
-        const rawRepo = (repoInput ? repoInput.value : 'nisargap/buzz').trim();
+        const picker = document.getElementById('gh-repo-picker');
+
+        // Always ensure whatever the user selected from the dropdown is used
+        if (!(options && options.repo) && picker && picker.value && picker.value !== '__custom__') {
+          if (repoInput) {
+            repoInput.value = picker.value;
+          }
+          localStorage.setItem('buzz_selected_repo', picker.value);
+        }
+
+        const rawRepo = (
+          (options && options.repo) ||
+          (repoInput ? repoInput.value : '')
+        ).trim();
+
+        if (!rawRepo) {
+          if (event && event.preventDefault) event.preventDefault();
+          const selectedNameEl = document.getElementById('selected-repo-name');
+          if (selectedNameEl) {
+            selectedNameEl.style.color = 'var(--sev-critical)';
+            selectedNameEl.textContent = '⚠ Please choose a repository from the dropdown first!';
+          }
+          if (picker) picker.focus();
+          return;
+        }
+
         const cleanRepo = rawRepo
           .replace(/\.git$/, '')
           .replace(/^https?:\/\/github\.com\//, '')
@@ -1034,7 +1515,7 @@
           .replace(/^\/+|\/+$/g, '');
 
         // Switch immediately to the dedicated Step 3 Analysis Page
-        window.buzzGoToStep(3);
+        window.buzzGoToStep(3, true);
 
         const headingEl = document.getElementById('analyzing-repo-heading');
         const counterEl = document.getElementById('context-counter-text');
@@ -1045,14 +1526,21 @@
         const magOverlay = document.getElementById('pixel-magnifier-overlay');
         const cveBox = document.getElementById('cve-crossref-box');
         const cveTicker = document.getElementById('cve-crossref-ticker');
+        const painterBox = document.getElementById('buzz-painter-box');
+        const painterTicker = document.getElementById('painter-status-ticker');
 
-        if (headingEl) headingEl.textContent = 'AUDITING ' + cleanRepo.toUpperCase();
+        if (headingEl) {
+          headingEl.textContent = isDiagramOnly
+            ? 'MAPPING ARCHITECTURE // ' + cleanRepo.toUpperCase()
+            : 'AUDITING ' + cleanRepo.toUpperCase();
+        }
         if (counterEl) counterEl.textContent = '0 / 1,000,000 TOKENS (0.0%)';
         if (streamEl) streamEl.textContent = 'Fetching Git tree metadata from GitHub...';
         if (logEl) logEl.innerHTML = '';
         if (cardEl) cardEl.classList.remove('compacting');
         if (magOverlay) magOverlay.classList.remove('active');
         if (cveBox) cveBox.classList.remove('active');
+        if (painterBox) painterBox.classList.remove('active');
         if (pillEl) {
           pillEl.className = 'compact-status-pill';
           pillEl.textContent = '⚡ AUTO-COMPACT THRESHOLD: 1,000,000 TOKENS';
@@ -1157,8 +1645,7 @@
               '+' + f.tokens.toLocaleString() + ' tokens'
             );
           } else {
-            // All repository files have been ingested: lock the gauge at the true token count
-            // and launch the Pixelated Magnifying Glass CVE Cross-Referencing animation!
+            // All repository files have been ingested: lock the gauge at the true token count!
             clearInterval(ingestionTimer);
             ingestionTimer = null;
 
@@ -1171,12 +1658,15 @@
                 '% OF 1M WINDOW)';
             }
             if (streamEl) {
-              streamEl.textContent =
-                '✓ ' +
-                auditableFiles.length +
-                ' FILES LOADED (' +
-                currentTokens.toLocaleString() +
-                ' TOKENS) — GEMINI 4 ARGON CROSS-REFERENCING CVEs...';
+              streamEl.textContent = isDiagramOnly
+                ? '✓ ' +
+                  auditableFiles.length +
+                  ' FILES IN 1M CONTEXT — ARTIST BUZZ IS PAINTING COMPONENT FLOW DIAGRAM...'
+                : '✓ ' +
+                  auditableFiles.length +
+                  ' FILES LOADED (' +
+                  currentTokens.toLocaleString() +
+                  ' TOKENS) — GEMINI 4 ARGON ANALYZING...';
             }
             if (!autoCompacted && pillEl) {
               pillEl.textContent =
@@ -1185,28 +1675,106 @@
                 '% USED — NO AUTO-COMPACT NEEDED)';
             }
 
-            // Activate the Pixelated Magnifying Glass overlay & CVE Cross-Reference Scanner
-            if (magOverlay) magOverlay.classList.add('active');
-            if (cveBox) cveBox.classList.add('active');
+            // Activate CVE Magnifying Glass when running a security audit
+            if (!isDiagramOnly) {
+              if (magOverlay) magOverlay.classList.add('active');
+              if (cveBox) cveBox.classList.add('active');
 
-            let cveTickIdx = 0;
-            cveScanTimer = setInterval(function () {
-              if (!cveTicker) return;
-              const cveSig = SAMPLE_CVE_CHECKS[cveTickIdx % SAMPLE_CVE_CHECKS.length];
-              const targetFile = auditableFiles[cveTickIdx % auditableFiles.length].path;
-              cveTickIdx += 1;
-              cveTicker.textContent = 'MATCHING ' + cveSig + ' ↔ ' + targetFile;
-            }, 220);
+              let cveTickIdx = 0;
+              cveScanTimer = setInterval(function () {
+                if (!cveTicker) return;
+                const cveSig = SAMPLE_CVE_CHECKS[cveTickIdx % SAMPLE_CVE_CHECKS.length];
+                const targetFile = auditableFiles[cveTickIdx % auditableFiles.length].path;
+                cveTickIdx += 1;
+                cveTicker.textContent = 'MATCHING ' + cveSig + ' ↔ ' + targetFile;
+              }, 220);
+            }
+
+            // Activate Artist Buzz with Beret & Paintbrush painting the pixelated canvas when creating diagram!
+            if (includeDiagram && painterBox) {
+              painterBox.classList.add('active');
+              let pIdx = 0;
+              painterTimer = setInterval(function () {
+                if (painterTicker) {
+                  painterTicker.textContent = PAINTER_STEPS[pIdx % PAINTER_STEPS.length];
+                  pIdx += 1;
+                }
+              }, 650);
+            }
           }
-        }, 70);
+        }, 65);
+      };
+
+      window.buzzGenerateDiagramForAudit = async function (scanId, repoFullName) {
+        const cleanRepo = (repoFullName || localStorage.getItem('buzz_selected_repo') || 'nisargap/buzz').trim();
+        const startedAt = Date.now();
+
+        // Launch the Step 3 1M Context Loader -> Artist Buzz Beret & Paintbrush Canvas animation!
+        window.buzzStartAnalysisPage(null, { diagramOnly: true, repo: cleanRepo });
+
+        try {
+          const params = new URLSearchParams();
+          if (scanId) params.append('scan_id', scanId);
+          params.append('repo', cleanRepo);
+          params.append('full_report', scanId ? 'true' : 'false');
+
+          const headers = getAuthHeaders();
+          headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+
+          const res = await fetch('/api/diagram', {
+            method: 'POST',
+            headers: headers,
+            body: params.toString()
+          });
+
+          // Ensure the 1M Context Loader + Artist Buzz Beret & Paintbrush animation is visible for at least 3.2s
+          const elapsed = Date.now() - startedAt;
+          if (elapsed < 3200) {
+            await new Promise(function (resolve) {
+              setTimeout(resolve, 3200 - elapsed);
+            });
+          }
+
+          stopAllAnalysisTimers();
+          if (painterTimer) {
+            clearInterval(painterTimer);
+            painterTimer = null;
+          }
+
+          if (res.ok) {
+            const html = await res.text();
+            const reportContainer = document.getElementById('report-container');
+            const diagSlot = document.getElementById('diagram-section-slot');
+
+            if (scanId && html.indexOf('report-header-card') !== -1 && reportContainer) {
+              reportContainer.innerHTML = html;
+            } else if (diagSlot) {
+              diagSlot.innerHTML = html;
+            } else if (reportContainer) {
+              reportContainer.innerHTML = html + reportContainer.innerHTML;
+            }
+            persistActiveReportState();
+            window.buzzGoToStep(4);
+          } else {
+            window.buzzGoToStep(4);
+          }
+        } catch (_) {
+          stopAllAnalysisTimers();
+          if (painterTimer) {
+            clearInterval(painterTimer);
+            painterTimer = null;
+          }
+          window.buzzGoToStep(4);
+        }
       };
 
       window.buzzFinishAnalysisPage = function (event) {
         stopAllAnalysisTimers();
         if (event && event.detail && event.detail.successful) {
+          persistActiveReportState();
           window.buzzGoToStep(4);
-          if (window.htmx) {
-            htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
+          if (githubUserHandle || githubProviderToken || supabaseUserId) {
+            window.buzzRefreshSavedAudits();
           }
         }
       };
@@ -1221,6 +1789,7 @@
         const form = document.getElementById('analyze-form');
         if (input && repoFullName) {
           input.value = repoFullName;
+          localStorage.setItem('buzz_selected_repo', repoFullName);
           input.dispatchEvent(new Event('input', { bubbles: true }));
         }
         if (form && window.htmx) {
@@ -1229,48 +1798,325 @@
       };
 
       // 5. Supabase GitHub OAuth & HTMX Header Bridge
-      let supabaseClient = null;
       let authReady;
-      let returningFromOAuth = window.location.hash.includes('access_token') || new URLSearchParams(window.location.search).has('code');
-      let supabaseUserId = sessionStorage.getItem('buzz_sb_uid') || '';
-      let githubProviderToken = sessionStorage.getItem('buzz_gh_token') || '';
-      let githubUserHandle = sessionStorage.getItem('buzz_gh_user') || '';
+      let PUBLIC_SUPABASE_URL = 'https://nqdkfucblwmdmxmungev.supabase.co';
+      let PUBLIC_SUPABASE_ANON_KEY =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5xZGtmdWNibHdtZG14bXVuZ2V2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NDA2NjUsImV4cCI6MjEwODUxNjY2NX0.DRXe_D9liZmrR-mXbDOTU_0Ejkj1ywj5_CBdy90w6Eo';
+
+      let supabaseUserId = localStorage.getItem('buzz_sb_uid') || '';
+      let githubProviderToken = localStorage.getItem('buzz_gh_token') || '';
+      let githubUserHandle = localStorage.getItem('buzz_gh_user') || '';
+      let githubAvatarUrl = localStorage.getItem('buzz_gh_avatar') || '';
+
+      // Synchronously hydrate from @supabase/supabase-js native localStorage key (`sb-nqdkfucblwmdmxmungev-auth-token`)
+      try {
+        const sbRaw = localStorage.getItem('sb-nqdkfucblwmdmxmungev-auth-token');
+        if (sbRaw) {
+          const sbParsed = JSON.parse(sbRaw);
+          const sbSession = sbParsed.currentSession || sbParsed;
+          if (sbSession) {
+            if (sbSession.user && sbSession.user.id && !supabaseUserId) {
+              supabaseUserId = sbSession.user.id;
+              localStorage.setItem('buzz_sb_uid', supabaseUserId);
+            }
+            if (sbSession.provider_token && !githubProviderToken) {
+              githubProviderToken = sbSession.provider_token;
+              localStorage.setItem('buzz_gh_token', githubProviderToken);
+            }
+            const sbMeta = (sbSession.user && sbSession.user.user_metadata) || {};
+            const sbHandle =
+              sbMeta.user_name ||
+              sbMeta.preferred_username ||
+              sbMeta.name ||
+              (sbSession.user && sbSession.user.email) ||
+              '';
+            if (sbHandle && !githubUserHandle) {
+              githubUserHandle = sbHandle;
+              localStorage.setItem('buzz_gh_user', githubUserHandle);
+            }
+            if (sbMeta.avatar_url && !githubAvatarUrl) {
+              githubAvatarUrl = sbMeta.avatar_url;
+              localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
+            }
+          }
+        }
+      } catch (_) {}
+
+      function getAuthHeaders() {
+        const headers = {};
+        if (githubProviderToken) headers['X-GitHub-Token'] = githubProviderToken;
+        if (githubUserHandle) headers['X-GitHub-User'] = githubUserHandle;
+        if (supabaseUserId) headers['X-Supabase-User-Id'] = supabaseUserId;
+        return headers;
+      }
+
+      function updateSelectedRepoReadout(repoVal) {
+        const nameEl = document.getElementById('selected-repo-name');
+        if (!nameEl) return;
+        if (repoVal && repoVal.trim()) {
+          nameEl.style.color = 'var(--buzz-green)';
+          nameEl.textContent = repoVal.trim();
+        } else {
+          nameEl.style.color = 'var(--buzz-yellow)';
+          nameEl.textContent = 'None selected (Choose a repository above)';
+        }
+      }
+
+      window.buzzOnRepoDropdownChange = function (val) {
+        const customPanel = document.getElementById('custom-repo-panel');
+        const repoInput = document.getElementById('repo-input');
+
+        if (val === '__custom__') {
+          if (customPanel) customPanel.style.display = 'block';
+          if (repoInput) {
+            repoInput.value = '';
+            repoInput.focus();
+          }
+          updateSelectedRepoReadout('');
+        } else if (val && val.trim()) {
+          if (customPanel) customPanel.style.display = 'none';
+          if (repoInput) {
+            repoInput.value = val.trim();
+          }
+          localStorage.setItem('buzz_selected_repo', val.trim());
+          updateSelectedRepoReadout(val.trim());
+        } else {
+          if (customPanel) customPanel.style.display = 'none';
+          if (repoInput) repoInput.value = '';
+          updateSelectedRepoReadout('');
+        }
+        if (repoInput) {
+          localStorage.setItem('buzz_selected_repo', repoInput.value);
+          repoInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      };
+
+      window.buzzRefreshRepos = async function () {
+        if (!(githubUserHandle || githubProviderToken || supabaseUserId)) return;
+        const slot = document.getElementById('connected-repos-slot');
+        if (!slot) return;
+        try {
+          const res = await fetch('/api/repos', { headers: getAuthHeaders() });
+          if (res.ok) {
+            slot.innerHTML = await res.text();
+            const picker = document.getElementById('gh-repo-picker');
+            const savedRepo = localStorage.getItem('buzz_selected_repo') || '';
+            if (picker && savedRepo) {
+              let foundInDropdown = false;
+              for (let i = 0; i < picker.options.length; i++) {
+                if (picker.options[i].value === savedRepo) {
+                  picker.selectedIndex = i;
+                  foundInDropdown = true;
+                  break;
+                }
+              }
+              if (foundInDropdown) {
+                window.buzzOnRepoDropdownChange(savedRepo);
+              } else {
+                picker.value = '__custom__';
+                const customPanel = document.getElementById('custom-repo-panel');
+                const repoInput = document.getElementById('repo-input');
+                if (customPanel) customPanel.style.display = 'block';
+                if (repoInput) {
+                  repoInput.value = savedRepo;
+                  repoInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                updateSelectedRepoReadout(savedRepo);
+              }
+            }
+          }
+        } catch (_) {}
+      };
+
+      window.buzzRefreshSavedAudits = async function () {
+        if (!(githubUserHandle || githubProviderToken || supabaseUserId)) return;
+        const slot = document.getElementById('saved-audits-slot');
+        if (!slot) return;
+        try {
+          const res = await fetch('/api/scans', { headers: getAuthHeaders() });
+          if (res.ok) {
+            const html = await res.text();
+            slot.innerHTML = html;
+
+            // If #report-container is empty on page load, preload the user's active or latest saved scan report!
+            const reportContainer = document.getElementById('report-container');
+            if (reportContainer && !reportContainer.innerHTML.trim()) {
+              let scanIdToLoad = localStorage.getItem('buzz_active_scan_id') || '';
+              if (!scanIdToLoad) {
+                const firstRow = slot.querySelector('[data-scan-id]');
+                if (firstRow) {
+                  scanIdToLoad = firstRow.getAttribute('data-scan-id') || '';
+                }
+              }
+              if (scanIdToLoad) {
+                const scanRes = await fetch(
+                  '/api/scans?id=' + encodeURIComponent(scanIdToLoad),
+                  { headers: getAuthHeaders() }
+                );
+                if (scanRes.ok) {
+                  const reportHtml = await scanRes.text();
+                  if (reportHtml.trim()) {
+                    reportContainer.innerHTML = reportHtml;
+                    persistActiveReportState();
+                    const savedStep = parseInt(localStorage.getItem('buzz_wizard_step') || '1', 10);
+                    if (savedStep === 4) {
+                      window.buzzGoToStep(4, true);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      };
+
+      function decodeJwtPayload(jwt) {
+        try {
+          const parts = (jwt || '').split('.');
+          if (parts.length < 2) return null;
+          const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = base64 + '==='.slice((base64.length + 3) % 4);
+          return JSON.parse(window.atob(padded));
+        } catch (_) {
+          return null;
+        }
+      }
+
+      // Synchronously capture #access_token & #provider_token from URL hash BEFORE Supabase SDK strips it
+      const rawHash = window.location.hash ? window.location.hash.substring(1) : '';
+      const hashParams = new URLSearchParams(rawHash);
+      const urlAccessToken = hashParams.get('access_token') || '';
+      const urlProviderToken = hashParams.get('provider_token') || '';
+      const urlRefreshToken = hashParams.get('refresh_token') || '';
+
+      if (urlProviderToken) {
+        githubProviderToken = urlProviderToken;
+        localStorage.setItem('buzz_gh_token', githubProviderToken);
+      }
+      if (urlAccessToken) {
+        const claims = decodeJwtPayload(urlAccessToken);
+        if (claims) {
+          if (claims.sub) {
+            supabaseUserId = claims.sub;
+            localStorage.setItem('buzz_sb_uid', supabaseUserId);
+          }
+          const meta = claims.user_metadata || {};
+          const handle =
+            meta.user_name ||
+            meta.preferred_username ||
+            meta.name ||
+            claims.email ||
+            '';
+          if (handle) {
+            githubUserHandle = handle;
+            localStorage.setItem('buzz_gh_user', githubUserHandle);
+          }
+          if (meta.avatar_url) {
+            githubAvatarUrl = meta.avatar_url;
+            localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
+          }
+        }
+      }
+
+      const hadOAuthCallbackOnBoot =
+        Boolean(urlAccessToken) ||
+        Boolean(urlProviderToken) ||
+        window.location.search.indexOf('code=') !== -1 ||
+        sessionStorage.getItem('buzz_oauth_pending') === '1';
+
+      let supabaseClient = null;
+      let returningFromOAuth = hadOAuthCallbackOnBoot;
 
       function updateAuthBadge() {
         // Consumers reuse this auth session; never put credentials in event details.
         window.dispatchEvent(new CustomEvent('buzz:auth-change'));
-        const dot = document.getElementById('github-auth-dot');
-        const label = document.getElementById('github-auth-label');
-        const signOutBtn = document.getElementById('github-signout-btn');
-        if (!dot || !label) return;
-        if (githubProviderToken) {
-          dot.className = 'led-dot';
-          label.textContent = 'GITHUB CONNECTED: @' + (githubUserHandle || 'CONNECTED');
-          if (signOutBtn) signOutBtn.style.display = 'inline-flex';
-        } else if (githubUserHandle || supabaseUserId) {
-          dot.className = 'led-dot warn';
-          label.textContent = supabaseUserId ? 'RECONNECT GITHUB FOR REPOSITORY ACCESS' : 'PUBLIC REPOS ONLY — CONNECT GITHUB';
-          if (signOutBtn) signOutBtn.style.display = 'inline-flex';
-        } else {
-          dot.className = 'led-dot warn';
-          label.textContent = 'SIGN IN WITH GITHUB (SUPABASE AUTH)';
-          if (signOutBtn) signOutBtn.style.display = 'none';
+        const isSignedIn = Boolean(githubUserHandle || githubProviderToken || supabaseUserId);
+        const displayHandle = githubUserHandle || 'github-user';
+
+        // 1. Update Global Top-Right Bar (visible on every page including Front Page)
+        const globalSignInBtn = document.getElementById('global-signin-btn');
+        const globalUserPill = document.getElementById('global-user-pill');
+        const globalUserLabel = document.getElementById('global-user-label');
+        const globalUserAvatar = document.getElementById('global-user-avatar');
+
+        if (globalSignInBtn && globalUserPill) {
+          if (isSignedIn) {
+            globalSignInBtn.style.display = 'none';
+            globalUserPill.style.display = 'inline-flex';
+            if (globalUserLabel) {
+              globalUserLabel.textContent = '@' + displayHandle;
+            }
+            if (globalUserAvatar) {
+              if (githubAvatarUrl) {
+                globalUserAvatar.src = githubAvatarUrl;
+                globalUserAvatar.style.display = 'inline-block';
+              } else {
+                globalUserAvatar.style.display = 'none';
+              }
+            }
+          } else {
+            globalSignInBtn.style.display = 'inline-flex';
+            globalUserPill.style.display = 'none';
+          }
         }
+
+        // 2. Toggle Step 2 Authenticated Area vs Logged-Out Notice
+        const authArea = document.getElementById('step2-authenticated-area');
+        const loggedOutNotice = document.getElementById('step2-logged-out-notice');
+        const savedAuditsSlot = document.getElementById('saved-audits-slot');
+        const connectedReposSlot = document.getElementById('connected-repos-slot');
+
+        if (isSignedIn) {
+          if (authArea) authArea.style.display = 'block';
+          if (loggedOutNotice) loggedOutNotice.style.display = 'none';
+        } else {
+          if (authArea) authArea.style.display = 'none';
+          if (loggedOutNotice) loggedOutNotice.style.display = 'block';
+          if (savedAuditsSlot) savedAuditsSlot.innerHTML = '';
+          if (connectedReposSlot) connectedReposSlot.innerHTML = '';
+        }
+      }
+
+      function clearSavedAuth() {
+        supabaseUserId = '';
+        githubProviderToken = '';
+        githubUserHandle = '';
+        githubAvatarUrl = '';
+        localStorage.removeItem('buzz_sb_uid');
+        localStorage.removeItem('buzz_gh_token');
+        localStorage.removeItem('buzz_gh_user');
+        localStorage.removeItem('buzz_gh_avatar');
+        localStorage.removeItem('buzz_wizard_step');
+        localStorage.removeItem('buzz_active_report_html');
+        localStorage.removeItem('buzz_active_scan_id');
+        localStorage.removeItem('buzz_selected_repo');
+        sessionStorage.removeItem('buzz_oauth_pending');
+        sessionStorage.removeItem('buzz_refactor_return');
+        sessionStorage.removeItem('buzz_sb_uid');
+        sessionStorage.removeItem('buzz_gh_token');
+        sessionStorage.removeItem('buzz_gh_user');
+        const reportContainer = document.getElementById('report-container');
+        if (reportContainer) reportContainer.innerHTML = '';
+        window.buzzGoToStep(1, true);
+      }
+
+      function finishOAuthNavigation() {
+        if (!returningFromOAuth) return;
+        returningFromOAuth = false;
+        sessionStorage.removeItem('buzz_oauth_pending');
+        // The refactor listener resumes its saved intent during updateAuthBadge.
+        if (!document.getElementById('wizard-step-5').classList.contains('active')) window.buzzGoToStep(2);
       }
 
       function applySupabaseSession(session) {
         if (!session) return;
-        if (returningFromOAuth) {
-          returningFromOAuth = false;
-          if (!document.getElementById('wizard-step-5').classList.contains('active')) window.buzzGoToStep(2);
-        }
         if (session.user && session.user.id) {
           supabaseUserId = session.user.id;
-          sessionStorage.setItem('buzz_sb_uid', supabaseUserId);
+          localStorage.setItem('buzz_sb_uid', supabaseUserId);
         }
         if (session.provider_token) {
           githubProviderToken = session.provider_token;
-          sessionStorage.setItem('buzz_gh_token', githubProviderToken);
+          localStorage.setItem('buzz_gh_token', githubProviderToken);
         }
         const meta = (session.user && session.user.user_metadata) || {};
         const handle =
@@ -1281,13 +2127,43 @@
           '';
         if (handle) {
           githubUserHandle = handle;
-          sessionStorage.setItem('buzz_gh_user', githubUserHandle);
+          localStorage.setItem('buzz_gh_user', githubUserHandle);
         }
+        if (meta.avatar_url) {
+          githubAvatarUrl = meta.avatar_url;
+          localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
+        }
+        restoreBrowserState();
         updateAuthBadge();
-        if (window.htmx) {
-          htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
-          htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
-        }
+        finishOAuthNavigation();
+        window.buzzRefreshRepos();
+        window.buzzRefreshSavedAudits();
+      }
+
+      async function verifyGitHubProfileFromToken() {
+        if (!githubProviderToken) return;
+        try {
+          const r = await fetch('https://api.github.com/user', {
+            headers: {
+              Accept: 'application/vnd.github+json',
+              Authorization: 'Bearer ' + githubProviderToken
+            }
+          });
+          if (r.ok) {
+            const profile = await r.json();
+            if (profile && profile.login) {
+              githubUserHandle = profile.login;
+              localStorage.setItem('buzz_gh_user', githubUserHandle);
+            }
+            if (profile && profile.avatar_url) {
+              githubAvatarUrl = profile.avatar_url;
+              localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
+            }
+            updateAuthBadge();
+            window.buzzRefreshRepos();
+            window.buzzRefreshSavedAudits();
+          }
+        } catch (_) {}
       }
 
       document.body.addEventListener('htmx:configRequest', function (evt) {
@@ -1302,7 +2178,7 @@
         }
       });
 
-      // 6. Bouncing Lightning Bolt Coding on a Laptop Overlay for /api/apply_patch
+      // 6. Bouncing Lightning Bolt Coding on a Laptop Overlay & Direct Apply Patch Handler
       let codingOverlayTimer = null;
       const CODING_STEPS = [
         'Synthesizing surgical patch with Gemini 4 Argon...',
@@ -1311,15 +2187,7 @@
         'Opening GitHub Pull Request with security diff...'
       ];
 
-      document.body.addEventListener('htmx:beforeRequest', function (evt) {
-        const path = (evt.detail && evt.detail.pathInfo && evt.detail.pathInfo.requestPath) || '';
-        const elt = evt.detail && evt.detail.elt;
-        const isApplyPatch =
-          path.indexOf('/api/apply_patch') !== -1 ||
-          (elt && elt.getAttribute && elt.getAttribute('hx-post') === '/api/apply_patch');
-
-        if (!isApplyPatch) return;
-
+      function showCodingOverlay() {
         const overlay = document.getElementById('patch-coding-overlay');
         const stepText = document.getElementById('patch-coding-step-text');
         if (overlay) overlay.classList.add('active');
@@ -1333,17 +2201,9 @@
             sIdx += 1;
           }
         }, 900);
-      });
+      }
 
-      document.body.addEventListener('htmx:afterRequest', function (evt) {
-        const path = (evt.detail && evt.detail.pathInfo && evt.detail.pathInfo.requestPath) || '';
-        const elt = evt.detail && evt.detail.elt;
-        const isApplyPatch =
-          path.indexOf('/api/apply_patch') !== -1 ||
-          (elt && elt.getAttribute && elt.getAttribute('hx-post') === '/api/apply_patch');
-
-        if (!isApplyPatch) return;
-
+      function hideCodingOverlay() {
         if (codingOverlayTimer) {
           clearInterval(codingOverlayTimer);
           codingOverlayTimer = null;
@@ -1352,27 +2212,192 @@
           const overlay = document.getElementById('patch-coding-overlay');
           if (overlay) overlay.classList.remove('active');
         }, 450);
+      }
+
+      window.buzzApplyPatch = async function (btnEl, evt) {
+        if (evt && evt.preventDefault) evt.preventDefault();
+        if (evt && evt.stopPropagation) evt.stopPropagation();
+
+        const form = btnEl ? btnEl.closest('form') : null;
+        if (!form) return false;
+
+        const targetSlot =
+          btnEl.closest('[id^="patch-action-slot-"]') || form.parentElement;
+
+        btnEl.disabled = true;
+        showCodingOverlay();
+
+        try {
+          const formData = new FormData(form);
+          const params = new URLSearchParams();
+          formData.forEach(function (val, key) {
+            params.append(key, String(val));
+          });
+
+          const headers = {
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+          };
+          if (githubProviderToken) headers['X-GitHub-Token'] = githubProviderToken;
+          if (githubUserHandle) headers['X-GitHub-User'] = githubUserHandle;
+          if (supabaseUserId) headers['X-Supabase-User-Id'] = supabaseUserId;
+
+          const res = await fetch('/api/apply_patch', {
+            method: 'POST',
+            headers: headers,
+            body: params.toString()
+          });
+
+          const html = await res.text();
+          if (targetSlot && html) {
+            targetSlot.innerHTML = html;
+            persistActiveReportState();
+          }
+        } catch (err) {
+          if (targetSlot) {
+            targetSlot.innerHTML =
+              '<div class="pr-badge-row"><span class="pr-status-tag error">✗ Network error while applying patch</span></div>';
+          }
+        } finally {
+          hideCodingOverlay();
+        }
+        return false;
+      };
+
+      // Global delegated listener so even cached/restored .pixel-btn-apply buttons always trigger buzzApplyPatch
+      document.addEventListener('click', function (evt) {
+        const applyBtn = evt.target && evt.target.closest ? evt.target.closest('.pixel-btn-apply') : null;
+        if (applyBtn && !applyBtn.getAttribute('onclick')) {
+          window.buzzApplyPatch(applyBtn, evt);
+        }
       });
 
-      async function initSupabaseAuth() {
-        updateAuthBadge();
+      window.buzzLoadSavedScan = async function (scanId) {
+        if (!scanId) return;
+        const headers = {};
+        if (githubProviderToken) headers['X-GitHub-Token'] = githubProviderToken;
+        if (githubUserHandle) headers['X-GitHub-User'] = githubUserHandle;
+        if (supabaseUserId) headers['X-Supabase-User-Id'] = supabaseUserId;
+
         try {
-          const res = await fetch('/api/auth_config');
-          if (!res.ok) return;
-          const cfg = await res.json();
-          if (cfg.supabase_url && cfg.supabase_anon_key && window.supabase) {
-            supabaseClient = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+          const res = await fetch('/api/scans?id=' + encodeURIComponent(scanId), {
+            headers: headers
+          });
+          if (res.ok) {
+            const html = await res.text();
+            const reportContainer = document.getElementById('report-container');
+            if (reportContainer) {
+              reportContainer.innerHTML = html;
+              persistActiveReportState();
+              window.buzzGoToStep(4);
+            }
+          }
+        } catch (_) {}
+      };
+
+      document.body.addEventListener('htmx:afterSettle', function (evt) {
+        const target = evt.detail && evt.detail.target;
+        if (!target) return;
+        const reportContainer = document.getElementById('report-container');
+        if (
+          target.id === 'report-container' ||
+          (reportContainer && reportContainer.contains(target))
+        ) {
+          persistActiveReportState();
+        }
+      });
+
+      let hasAttachedRepoInputListener = false;
+
+      function restoreBrowserState() {
+        const savedRepo = localStorage.getItem('buzz_selected_repo');
+        const repoInput = document.getElementById('repo-input');
+        if (repoInput) {
+          if (savedRepo) {
+            repoInput.value = savedRepo;
+            updateSelectedRepoReadout(savedRepo);
+          }
+          if (!hasAttachedRepoInputListener) {
+            hasAttachedRepoInputListener = true;
+            repoInput.addEventListener('input', function () {
+              localStorage.setItem('buzz_selected_repo', repoInput.value);
+              updateSelectedRepoReadout(repoInput.value);
+            });
+          }
+        }
+
+        const isSignedIn = Boolean(githubUserHandle || githubProviderToken || supabaseUserId);
+        if (!isSignedIn) return;
+
+        const savedReportHtml = localStorage.getItem('buzz_active_report_html') || '';
+        const savedScanId = localStorage.getItem('buzz_active_scan_id') || '';
+        const savedStep = parseInt(localStorage.getItem('buzz_wizard_step') || '1', 10);
+
+        const reportContainer = document.getElementById('report-container');
+        if (reportContainer && savedReportHtml.trim() && !reportContainer.innerHTML.trim()) {
+          reportContainer.innerHTML = savedReportHtml;
+          if (window.htmx) {
+            window.htmx.process(reportContainer);
+          }
+        }
+
+        if (!hadOAuthCallbackOnBoot) {
+          if (savedStep === 4 && (savedReportHtml.trim() || savedScanId)) {
+            window.buzzGoToStep(4, true);
+            if (savedScanId) {
+              window.buzzLoadSavedScan(savedScanId);
+            }
+          } else if (savedStep === 2 || savedStep === 3) {
+            window.buzzGoToStep(2, true);
+          } else if (savedStep === 5) {
+            window.buzzGoToStep(5, true);
+          }
+        }
+      }
+
+      async function initSupabaseAuth() {
+        restoreBrowserState();
+        updateAuthBadge();
+        if (hadOAuthCallbackOnBoot) {
+          finishOAuthNavigation();
+          if (window.location.hash && window.history && window.history.replaceState) {
+            window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+          }
+        }
+        if (githubProviderToken && !githubUserHandle) {
+          verifyGitHubProfileFromToken();
+        }
+        if (githubUserHandle || githubProviderToken || supabaseUserId) {
+          window.buzzRefreshRepos();
+          window.buzzRefreshSavedAudits();
+        }
+        try {
+          // Keep local/deployed environment configuration while hydrating cached UI immediately.
+          try {
+            const res = await fetch('/api/auth_config');
+            if (res.ok) {
+              const cfg = await res.json();
+              PUBLIC_SUPABASE_URL = cfg.supabase_url || '';
+              PUBLIC_SUPABASE_ANON_KEY = cfg.supabase_anon_key || '';
+            }
+          } catch (_) {}
+          if (PUBLIC_SUPABASE_URL && PUBLIC_SUPABASE_ANON_KEY && window.supabase) {
+            supabaseClient = window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
+          }
+          if (supabaseClient) {
+            if (urlAccessToken && urlRefreshToken) {
+              try {
+                await supabaseClient.auth.setSession({
+                  access_token: urlAccessToken,
+                  refresh_token: urlRefreshToken
+                });
+              } catch (_) {}
+            }
 
             supabaseClient.auth.onAuthStateChange(function (event, session) {
-              if (event === 'SIGNED_IN' && session) {
+              if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') && session) {
                 applySupabaseSession(session);
               } else if (event === 'SIGNED_OUT') {
-                supabaseUserId = '';
-                githubProviderToken = '';
-                githubUserHandle = '';
-                sessionStorage.removeItem('buzz_sb_uid');
-                sessionStorage.removeItem('buzz_gh_token');
-                sessionStorage.removeItem('buzz_gh_user');
+                clearSavedAuth();
                 updateAuthBadge();
               }
             });
@@ -1388,10 +2413,15 @@
       window.buzzConnectGitHub = async function (options) {
         await authReady;
         const requireRepoAccess = options && options.requireRepoAccess === true;
+        sessionStorage.setItem('buzz_oauth_pending', '1');
+        if (!supabaseClient && PUBLIC_SUPABASE_URL && PUBLIC_SUPABASE_ANON_KEY && window.supabase) {
+          supabaseClient = window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
+        }
         if (supabaseClient) {
           if (requireRepoAccess) {
             // Do not resume a reconnect with the credential GitHub just rejected.
             githubProviderToken = '';
+            localStorage.removeItem('buzz_gh_token');
             sessionStorage.removeItem('buzz_gh_token');
             updateAuthBadge();
           }
@@ -1408,45 +2438,21 @@
         if (requireRepoAccess) {
           throw new Error('GitHub sign-in is unavailable. Check the Supabase auth settings, then refresh this page.');
         }
-        const input = window.prompt(
-          'Enter your GitHub Personal Access Token (ghp_...) or username to connect:',
-          githubUserHandle || 'nisargap'
-        );
-        if (input && input.trim()) {
-          const trimmed = input.trim();
-          if (trimmed.startsWith('ghp_') || trimmed.startsWith('github_pat_')) {
-            githubProviderToken = trimmed;
-            githubUserHandle = githubUserHandle || 'github-user';
-            sessionStorage.setItem('buzz_gh_token', githubProviderToken);
-          } else {
-            githubUserHandle = trimmed;
-          }
-          sessionStorage.setItem('buzz_gh_user', githubUserHandle);
-          updateAuthBadge();
-          if (window.htmx) {
-            htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
-            htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
-          }
-        }
+        // Direct redirect to Supabase GitHub OAuth authorize endpoint
+        window.location.href =
+          PUBLIC_SUPABASE_URL +
+          '/auth/v1/authorize?provider=github&scopes=read:user+repo&redirect_to=' +
+          encodeURIComponent(window.location.origin);
       };
 
       window.buzzSignOutGitHub = async function () {
         // Clear local review/source state immediately, even if remote sign-out is slow.
-        supabaseUserId = '';
-        githubProviderToken = '';
-        githubUserHandle = '';
-        sessionStorage.removeItem('buzz_sb_uid');
-        sessionStorage.removeItem('buzz_gh_token');
-        sessionStorage.removeItem('buzz_gh_user');
+        clearSavedAuth();
         updateAuthBadge();
         if (supabaseClient) {
           try {
             await supabaseClient.auth.signOut();
           } catch (_) {}
-        }
-        if (window.htmx) {
-          htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
-          htmx.ajax('GET', '/api/scans', { target: '#saved-audits-slot', swap: 'innerHTML' });
         }
       };
 
@@ -1454,32 +2460,15 @@
         const input = document.getElementById('repo-input');
         if (input) {
           input.value = repoFullName;
+          localStorage.setItem('buzz_selected_repo', repoFullName);
+          updateSelectedRepoReadout(repoFullName);
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.focus();
         }
       };
 
       window.buzzConnectGitHubForPR = async function () {
-        if (supabaseClient) {
-          const { error } = await supabaseClient.auth.signInWithOAuth({
-            provider: 'github',
-            options: {
-              scopes: 'read:user repo',
-              redirectTo: window.location.origin
-            }
-          });
-          if (!error) return;
-        }
-        const tok = window.prompt(
-          'Enter a GitHub Personal Access Token (ghp_... or github_pat_...) with `repo` permission to create remediation branches & Pull Requests:',
-          githubProviderToken || ''
-        );
-        if (tok && tok.trim()) {
-          githubProviderToken = tok.trim();
-          sessionStorage.setItem('buzz_gh_token', githubProviderToken);
-          updateAuthBadge();
-          window.alert('GitHub token saved! Click "⚡ APPLY & OPEN PR" on any patch to open the Pull Request.');
-        }
+        await window.buzzConnectGitHub();
       };
 
       authReady = initSupabaseAuth();

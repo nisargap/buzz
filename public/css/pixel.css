@@ -141,6 +141,10 @@ body::before {
   max-width: 920px;
 }
 
+.wizard-step.wizard-step-front {
+  max-width: 980px;
+}
+
 @keyframes step-appear {
   from {
     opacity: 0;
@@ -153,7 +157,7 @@ body::before {
 }
 
 /* ==========================================================================
-   STEP 1: MINIMAL FRONT PAGE (JUST BUZZ LOGO + ANALYZE BUTTON)
+   STEP 1: FRONT PAGE (LARGE BUZZ LOGO + CIRCULAR PIXEL WIND + 3 FEATURE CARDS)
    ========================================================================== */
 
 .front-hero {
@@ -161,21 +165,54 @@ body::before {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 26px;
+  gap: 22px;
+  width: 100%;
 }
 
 .front-logo-wrap {
   position: relative;
+  width: 330px;
+  height: 330px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
-  filter: drop-shadow(0 12px 0 rgba(2, 4, 12, 0.65));
+  filter: drop-shadow(0 14px 0 rgba(2, 4, 12, 0.72));
+}
+
+/* Circular Pixelated Wind Rings Orbiting Around the Buzz Logo */
+.pixel-wind-orbit-outer,
+.pixel-wind-orbit-inner {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+.pixel-wind-orbit-outer {
+  animation: pixel-wind-circle-cw 5.6s steps(24, end) infinite;
+}
+
+.pixel-wind-orbit-inner {
+  animation: pixel-wind-circle-ccw 4.0s steps(20, end) infinite;
+}
+
+@keyframes pixel-wind-circle-cw {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes pixel-wind-circle-ccw {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
 }
 
 .front-logo-svg {
-  width: 210px;
-  height: 210px;
+  position: relative;
+  z-index: 2;
+  width: 268px;
+  height: 268px;
   image-rendering: pixelated;
   animation: pixel-float 1.6s steps(4, end) infinite;
 }
@@ -187,12 +224,115 @@ body::before {
 
 .front-wordmark {
   font-family: var(--font-display);
-  font-size: 2.2rem;
+  font-size: 2.5rem;
   color: var(--buzz-yellow);
   text-shadow:
     4px 4px 0 var(--border-dark),
-    0 0 18px rgba(255, 224, 71, 0.28);
-  letter-spacing: 4px;
+    0 0 22px rgba(255, 224, 71, 0.34);
+  letter-spacing: 5px;
+  margin-top: -6px;
+}
+
+/* Three Separately Colored Feature Cards with Left Pixel Icons */
+.front-features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  width: 100%;
+  margin-top: 12px;
+}
+
+@media (max-width: 860px) {
+  .front-features-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.feature-pixel-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  text-align: left;
+  padding: 18px 18px;
+  border: 4px solid var(--border-blue);
+  box-shadow:
+    0 0 0 3px var(--border-dark),
+    6px 6px 0 0 var(--border-dark);
+  transition: transform 0.08s steps(2, end);
+}
+
+.feature-pixel-card:hover {
+  transform: translateY(-4px);
+}
+
+/* Card 1: Electric Gold / Amber Security Audit Theme */
+.feature-pixel-card.card-gold {
+  background: linear-gradient(135deg, rgba(44, 31, 8, 0.94) 0%, rgba(19, 15, 36, 0.95) 100%);
+  border-color: var(--buzz-yellow);
+}
+
+/* Card 2: Cyber Emerald Automated PR Theme */
+.feature-pixel-card.card-green {
+  background: linear-gradient(135deg, rgba(7, 38, 27, 0.94) 0%, rgba(11, 21, 40, 0.95) 100%);
+  border-color: var(--buzz-green);
+}
+
+/* Card 3: Neon Cyan / Indigo Codebase Diagrams Theme */
+.feature-pixel-card.card-cyan {
+  background: linear-gradient(135deg, rgba(8, 32, 54, 0.94) 0%, rgba(22, 16, 48, 0.95) 100%);
+  border-color: var(--buzz-cyan);
+}
+
+.feature-icon-box {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--terminal-bg);
+  border: 3px solid var(--border-dark);
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.7);
+}
+
+.card-gold .feature-icon-box {
+  border-color: var(--buzz-yellow);
+  box-shadow: 3px 3px 0 0 rgba(255, 224, 71, 0.25);
+}
+
+.card-green .feature-icon-box {
+  border-color: var(--buzz-green);
+  box-shadow: 3px 3px 0 0 rgba(46, 230, 138, 0.25);
+}
+
+.card-cyan .feature-icon-box {
+  border-color: var(--buzz-cyan);
+  box-shadow: 3px 3px 0 0 rgba(72, 209, 255, 0.25);
+}
+
+.feature-icon-svg {
+  width: 38px;
+  height: 38px;
+  image-rendering: pixelated;
+}
+
+.feature-card-title {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  line-height: 1.45;
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.card-gold .feature-card-title { color: var(--buzz-yellow); }
+.card-green .feature-card-title { color: var(--buzz-green); }
+.card-cyan .feature-card-title { color: var(--buzz-cyan); }
+
+.feature-card-desc {
+  font-family: var(--font-code);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 /* ==========================================================================
@@ -866,6 +1006,10 @@ body::before {
   font-family: var(--font-display);
   font-size: 0.62rem;
   padding: 7px 12px;
+  cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
   box-shadow:
     inset -2px -2px 0 0 #159454,
     inset 2px 2px 0 0 #9effce,
@@ -877,10 +1021,9 @@ body::before {
   color: #02120a;
 }
 
-.htmx-request .pixel-btn-apply,
-.pixel-btn-apply.htmx-request {
-  opacity: 0.7;
-  pointer-events: none;
+.pixel-btn-apply:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .pr-badge-row {
@@ -1044,6 +1187,41 @@ body::before {
   font-size: 0.82rem;
   color: var(--buzz-cyan);
   min-height: 1.4em;
+}
+
+/* ==========================================================================
+   GLOBAL TOP-RIGHT USER AUTH PILL (VISIBLE ON ALL WIZARD PAGES)
+   ========================================================================== */
+
+.global-auth-bar {
+  position: fixed;
+  top: 18px;
+  right: 20px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel-bg);
+  border: 3px solid var(--buzz-green);
+  box-shadow: 4px 4px 0 0 var(--border-dark);
+  padding: 6px 12px;
+  font-family: var(--font-code);
+  font-size: 0.78rem;
+  color: var(--text-main);
+}
+
+.user-avatar-pixel {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--buzz-yellow);
+  image-rendering: pixelated;
+  display: none;
 }
 
 /* ==========================================================================
@@ -1814,4 +1992,271 @@ textarea.refactor-code {
   .refactor-goal-card:active:not(:disabled) {
     transform: none;
   }
+}
+
+/* ==========================================================================
+   PIXEL CHECKBOX FOR DIAGRAM SELECTION
+   ========================================================================== */
+
+.pixel-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--terminal-bg);
+  border: 2px solid var(--border-blue);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-code);
+  font-size: 0.84rem;
+  color: var(--text-main);
+}
+
+.pixel-checkbox-label:hover {
+  border-color: var(--buzz-cyan);
+}
+
+.pixel-checkbox-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  background: #050813;
+  border: 3px solid var(--buzz-cyan);
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+}
+
+.pixel-checkbox-input:checked {
+  background: var(--buzz-cyan);
+}
+
+.pixel-checkbox-input:checked::before {
+  content: "✓";
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  color: #04101e;
+  font-weight: 700;
+}
+
+/* ==========================================================================
+   ARTIST BUZZ WITH BERET & PAINTBRUSH PAINTING A PIXELATED CANVAS
+   ========================================================================== */
+
+.buzz-painter-box {
+  display: none;
+  width: 100%;
+  background: #081026;
+  border: 3px solid var(--buzz-yellow);
+  box-shadow: inset 0 0 22px rgba(255, 224, 71, 0.14);
+  padding: 16px 18px;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.buzz-painter-box.active {
+  display: flex;
+  animation: step-appear 0.16s steps(2, end);
+}
+
+.buzz-painter-scene-svg {
+  width: 244px;
+  height: 192px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.75));
+}
+
+.painter-bolt-bob {
+  animation: bolt-coder-bounce 0.45s steps(2, end) infinite;
+}
+
+.painter-brush-arm {
+  animation: paintbrush-sweep 0.55s steps(4, end) infinite;
+  transform-origin: 22px 20px;
+}
+
+@keyframes paintbrush-sweep {
+  0%   { transform: translate(0px, 0px); }
+  25%  { transform: translate(2px, -3px); }
+  50%  { transform: translate(3px, 2px); }
+  75%  { transform: translate(1px, 4px); }
+  100% { transform: translate(0px, 0px); }
+}
+
+.canvas-stroke-1 {
+  animation: canvas-reveal-1 1.6s steps(2, end) infinite;
+}
+
+.canvas-stroke-2 {
+  animation: canvas-reveal-2 1.6s steps(2, end) infinite;
+}
+
+.canvas-stroke-3 {
+  animation: canvas-reveal-3 1.6s steps(2, end) infinite;
+}
+
+@keyframes canvas-reveal-1 {
+  0%, 15%  { opacity: 0.25; }
+  20%, 100% { opacity: 1; }
+}
+
+@keyframes canvas-reveal-2 {
+  0%, 45%  { opacity: 0.2; }
+  50%, 100% { opacity: 1; }
+}
+
+@keyframes canvas-reveal-3 {
+  0%, 70%  { opacity: 0.15; }
+  75%, 100% { opacity: 1; }
+}
+
+/* ==========================================================================
+   HEAT-SATURATED NEURAL MAP DIAGRAM & THERMAL TELEMETRY
+   ========================================================================== */
+
+.neural-map-card {
+  background: #05020d;
+  border: 4px solid #ff2e63;
+  box-shadow:
+    0 0 0 4px var(--border-dark),
+    8px 8px 0 0 var(--border-dark),
+    0 0 38px rgba(255, 46, 99, 0.22);
+  padding: 22px;
+  margin-bottom: 22px;
+}
+
+.neural-map-viewport {
+  width: 100%;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(157, 78, 221, 0.16) 0%, rgba(5, 2, 13, 0.98) 78%),
+    #04020a;
+  border: 3px solid #3a1c5c;
+  box-shadow: inset 0 0 40px rgba(255, 46, 99, 0.15);
+  overflow: hidden;
+  position: relative;
+}
+
+.neural-map-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Flowing synaptic action-potential pulses along neural axons */
+.synapse-axon-pulse {
+  stroke-dasharray: 8 14;
+  animation: axon-flow 1.4s linear infinite;
+}
+
+@keyframes axon-flow {
+  from { stroke-dashoffset: 44; }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* Pulsing thermal aura & neural core rings */
+.neural-aura-pulse {
+  animation: thermal-breathe 2.6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes thermal-breathe {
+  0%, 100% { opacity: 0.78; transform: scale(1); }
+  50%      { opacity: 0.98; transform: scale(1.08); }
+}
+
+.neural-ring-spin {
+  stroke-dasharray: 6 6;
+  animation: ring-orbit 8s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes ring-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Thermal Spectrum Scale Bar */
+.thermal-legend-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: #080414;
+  border: 2px solid #3a1c5c;
+  font-family: var(--font-code);
+  font-size: 0.74rem;
+}
+
+.thermal-gradient-strip {
+  flex: 1;
+  min-width: 180px;
+  height: 12px;
+  border: 2px solid #020106;
+  background: linear-gradient(
+    90deg,
+    #1d3557 0%,
+    #3a86ff 18%,
+    #00f5d4 36%,
+    #9d4edd 54%,
+    #ffb703 72%,
+    #ff2e63 88%,
+    #fff7d6 100%
+  );
+}
+
+.neural-nodes-legend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.neural-node-summary-card {
+  background: #090518;
+  border: 2px solid #3a1c5c;
+  padding: 12px 14px;
+  font-family: var(--font-code);
+  text-align: left;
+}
+
+.neural-node-summary-card.heat-critical { border-color: #ff2e63; }
+.neural-node-summary-card.heat-high     { border-color: #ff8c32; }
+.neural-node-summary-card.heat-warm     { border-color: #ffe047; }
+.neural-node-summary-card.heat-cool     { border-color: #00f5d4; }
+
+.neural-heat-pill {
+  font-family: var(--font-display);
+  font-size: 0.58rem;
+  padding: 4px 7px;
+  border: 1px solid #000;
+}
+
+.neural-heat-pill.heat-critical { background: #ff2e63; color: #fff; }
+.neural-heat-pill.heat-high     { background: #ff8c32; color: #160700; }
+.neural-heat-pill.heat-warm     { background: #ffe047; color: #1c1400; }
+.neural-heat-pill.heat-cool     { background: #00f5d4; color: #021c18; }
+
+.diag-files-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.diag-file-pill {
+  background: #120929;
+  border: 1px solid #4a2574;
+  color: #7ce4ff;
+  font-family: var(--font-code);
+  font-size: 0.72rem;
+  padding: 2px 7px;
 }

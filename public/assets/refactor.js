@@ -186,7 +186,7 @@
     };
 
     function readToken() {
-      try { return win.sessionStorage.getItem('buzz_gh_token') || ''; } catch (_) { return ''; }
+      try { return win.localStorage.getItem('buzz_gh_token') || ''; } catch (_) { return ''; }
     }
     function clearAuthReturn() {
       try { win.sessionStorage.removeItem(AUTH_RETURN_KEY); } catch (_) {}
@@ -205,6 +205,7 @@
       const saved = readAuthReturn();
       if (!saved) return false;
       repoInput.value = saved.repo;
+      repoInput.dispatchEvent(new win.Event('input', { bubbles: true }));
       syncIdentity();
       state.goal = saved.goal;
       win.buzzGoToStep(5);
@@ -401,7 +402,7 @@
       const busy = Boolean(state.request) || state.connecting;
       ui.settings.disabled = busy;
       root.setAttribute('aria-busy', String(busy));
-      ui['open-btn'].disabled = busy;
+      ui['open-btn'].disabled = busy || !state.repo;
       updateLoadControl();
       ui['goal-next-btn'].disabled = busy || !state.listing;
       Object.keys(GOALS).forEach(function (goal) {
@@ -776,11 +777,13 @@
         setStage(request.returnStage, false);
         status(request.kind === 'publish' ? 'Stopped waiting for publication. Check GitHub before retrying.' : 'Request cancelled. You can continue when ready.');
         updateControls();
+      } else if (event.detail.step === 5 && state.repo && state.token && !state.authRequired && !state.listing && !state.request) {
+        loadFiles();
       }
     });
     win.addEventListener('pagehide', function () { clearRepository(); updateControls(); });
     syncIdentity();
-    resumeAfterAuth();
+    if (!resumeAfterAuth() && root.classList.contains('active') && state.repo && state.token) loadFiles();
   }
 
   return {

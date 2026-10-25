@@ -3,44 +3,67 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BUZZ // Gemini 4 Argon Pixel CVE Code Auditor</title>
+  <title>BUZZ // Gemini 4 Argon CVE Auditor</title>
   <link rel="icon" type="image/svg+xml" href="/assets/buzz-logo.svg" />
   <link rel="stylesheet" href="/css/pixel.css" />
   <!-- HTMX for server-rendered HTML fragments from Rust Vercel Functions -->
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <!-- Supabase JS Client solely for GitHub OAuth handshake -->
+  <!-- Supabase JS Client for GitHub OAuth -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-  <div class="page-shell">
+  <!-- Pixelated Rain Animation Canvas over the Dark-to-Dark-Blue Gradient Fade -->
+  <canvas id="pixel-rain-canvas" aria-hidden="true"></canvas>
+
+  <main class="wizard-shell">
 
     <!-- ================================================================== -->
-    <!-- TOP BAR: LOGO + SYSTEM STATUS + SUPABASE GITHUB AUTH               -->
+    <!-- WIZARD STEP 1: FRONT PAGE (JUST BUZZ LOGO + ANALYZE REPO BUTTON)   -->
     <!-- ================================================================== -->
-    <header class="topbar pixel-box">
-      <a href="/" class="brand-cluster">
-        <img src="/assets/buzz-logo.svg" alt="Buzz Logo" class="brand-logo-sm" />
-        <div>
-          <span class="brand-title">BUZZ</span>
-          <span class="brand-subtitle">GEMINI 4 ARGON // CVE AUDITOR</span>
+    <section id="wizard-step-1" class="wizard-step active">
+      <div class="front-hero">
+        <div class="front-logo-wrap">
+          <img
+            src="/assets/buzz-logo.svg"
+            alt="Buzz Logo — Pixel Lightning Bolt with Two Dark Eyes Floating on a Cloud"
+            class="front-logo-svg"
+          />
         </div>
-      </a>
 
-      <div class="topbar-right">
-        <!-- HTMX Polled Health Badge from Rust /api/health -->
-        <div
-          id="health-status"
-          hx-get="/api/health"
-          hx-trigger="load"
-          hx-swap="innerHTML"
+        <h1 class="front-wordmark">BUZZ</h1>
+
+        <button
+          type="button"
+          class="pixel-btn pixel-btn-primary"
+          onclick="window.buzzGoToStep(2)"
         >
-          <span class="status-pill">
-            <span class="led-dot"></span>
-            <span>ENGINE: GEMINI-4-ARGON READY</span>
-          </span>
-        </div>
+          ⚡ ANALYZE REPO
+        </button>
+      </div>
+    </section>
 
-        <!-- Supabase GitHub OAuth Button -->
+    <!-- ================================================================== -->
+    <!-- WIZARD STEP 2: CONNECT GITHUB & SELECT REPOSITORY                  -->
+    <!-- ================================================================== -->
+    <section id="wizard-step-2" class="wizard-step">
+      <div class="wizard-top-nav">
+        <button
+          type="button"
+          class="pixel-btn pixel-btn-sm"
+          onclick="window.buzzGoToStep(1)"
+        >
+          ← BACK
+        </button>
+        <span class="step-badge">STEP 1 OF 2 // TARGET REPO</span>
+      </div>
+
+      <div class="pixel-box-gold">
+        <h2 class="wizard-title">CONNECT GITHUB &amp; PICK REPO</h2>
+        <p class="wizard-subtitle">
+          Gemini 4 Argon will check your repository against the CVE datasource.
+        </p>
+
+        <!-- Supabase GitHub OAuth Connect Button -->
         <button
           id="github-auth-btn"
           type="button"
@@ -48,112 +71,75 @@
           onclick="window.buzzConnectGitHub()"
         >
           <span id="github-auth-dot" class="led-dot warn"></span>
-          <span id="github-auth-label">CONNECT GITHUB</span>
+          <span id="github-auth-label">CONNECT GITHUB WITH SUPABASE</span>
         </button>
-      </div>
-    </header>
 
-    <!-- ================================================================== -->
-    <!-- HERO STAGE: PIXEL LIGHTNING BOLT ON CLOUD + ANALYZE REPO FORM      -->
-    <!-- ================================================================== -->
-    <section class="hero-grid pixel-box-gold">
-      <div class="mascot-stage">
-        <img
-          src="/assets/buzz-logo.svg"
-          alt="Buzz Mascot: Lightning bolt with two dark eyes floating on a cloud"
-          class="mascot-hero-svg"
-        />
-        <div class="mascot-caption">⚡ ZAP CVEs BEFORE PROD ⚡</div>
-      </div>
+        <!-- Connected GitHub Repo Dropdown Slot (populated via HTMX GET /api/repos) -->
+        <div id="connected-repos-slot" style="margin-top: 12px;"></div>
 
-      <div class="hero-copy">
-        <h1>
-          AUDIT YOUR GITHUB REPO WITH
-          <span class="highlight-argon">GEMINI 4 ARGON</span>
-        </h1>
-        <p class="hero-lead">
-          Connect your GitHub via Supabase Auth, pick a repository, and click
-          <strong>ANALYZE REPO</strong>. Buzz cross-references your manifests and
-          source tree against the live Supabase CVE datasource and renders a pixel
-          vulnerability report.
-        </p>
+        <div class="wizard-divider">— OR ENTER REPOSITORY —</div>
 
         <!-- HTMX Form posting to Rust Vercel Function: POST /api/analyze -->
         <form
           id="analyze-form"
-          class="analyzer-form"
           hx-post="/api/analyze"
           hx-target="#report-container"
           hx-swap="innerHTML"
           hx-indicator="#scan-indicator"
+          hx-on::after-request="if(event.detail.successful) window.buzzGoToStep(3);"
         >
-          <div class="analyzer-row">
-            <div>
-              <input
-                id="repo-input"
-                name="repo"
-                type="text"
-                class="pixel-input"
-                placeholder="owner/repo (e.g. expressjs/express or rust-lang/cargo)"
-                value="acme-labs/payment-gateway-rs"
-                required
-                autocomplete="off"
-              />
-            </div>
-            <button type="submit" class="pixel-btn pixel-btn-primary">
-              ⚡ ANALYZE REPO
-            </button>
-          </div>
+          <input
+            id="repo-input"
+            name="repo"
+            type="text"
+            class="pixel-input"
+            placeholder="owner/repo (e.g. acme-labs/payment-gateway-rs)"
+            value="acme-labs/payment-gateway-rs"
+            required
+            autocomplete="off"
+          />
 
-          <!-- Connected GitHub Repo Selector (populated via HTMX GET /api/repos) -->
-          <div id="connected-repos-slot" style="margin-top: 12px;"></div>
-
-          <div class="analyzer-toolbar">
-            <div class="preset-chips">
-              <span class="preset-label">Quick Targets:</span>
-              <button
-                type="button"
-                class="chip-btn"
-                onclick="window.buzzSelectRepo('acme-labs/payment-gateway-rs')"
-              >
-                acme-labs/payment-gateway-rs
-              </button>
-              <button
-                type="button"
-                class="chip-btn"
-                onclick="window.buzzSelectRepo('nebula-ui/express-checkout-api')"
-              >
-                nebula-ui/express-checkout-api
-              </button>
-              <button
-                type="button"
-                class="chip-btn"
-                onclick="window.buzzSelectRepo('hyperion-ai/python-rag-worker')"
-              >
-                hyperion-ai/python-rag-worker
-              </button>
-            </div>
-
+          <div class="preset-chips">
             <button
               type="button"
-              class="pixel-btn pixel-btn-sm"
-              hx-get="/api/repos"
-              hx-target="#connected-repos-slot"
-              hx-swap="innerHTML"
+              class="chip-btn"
+              onclick="window.buzzSelectRepo('acme-labs/payment-gateway-rs')"
             >
-              SYNC MY GITHUB REPOS
+              acme-labs/payment-gateway-rs
+            </button>
+            <button
+              type="button"
+              class="chip-btn"
+              onclick="window.buzzSelectRepo('nebula-ui/express-checkout-api')"
+            >
+              nebula-ui/express-checkout-api
+            </button>
+            <button
+              type="button"
+              class="chip-btn"
+              onclick="window.buzzSelectRepo('hyperion-ai/python-rag-worker')"
+            >
+              hyperion-ai/python-rag-worker
             </button>
           </div>
+
+          <button
+            type="submit"
+            class="pixel-btn pixel-btn-primary"
+            style="width: 100%; margin-top: 20px;"
+          >
+            ⚡ RUN GEMINI 4 ARGON AUDIT
+          </button>
 
           <!-- HTMX Loading Indicator -->
           <div id="scan-indicator" class="htmx-indicator scan-loader">
             <div class="pixel-spinner"></div>
             <div>
               <div class="scan-loader-text">
-                GEMINI 4 ARGON IS AUDITING REPOSITORY &amp; MATCHING CVEs...
+                GEMINI 4 ARGON AUDITING REPO &amp; CVEs...
               </div>
-              <div style="font-size: 0.75rem; color: var(--text-muted);">
-                Fetching manifests → Querying Supabase CVE table → Synthesizing exploitability report
+              <div style="font-size: 0.72rem; color: var(--text-muted);">
+                Cross-referencing manifests &amp; source tree against Supabase CVE signatures
               </div>
             </div>
           </div>
@@ -162,96 +148,124 @@
     </section>
 
     <!-- ================================================================== -->
-    <!-- VULNERABILITY REPORT TARGET (SWAPPED BY HTMX POST /api/analyze)    -->
+    <!-- WIZARD STEP 3: VULNERABILITY REPORT                                -->
     <!-- ================================================================== -->
-    <section id="report-container" class="report-section" aria-live="polite">
-      <div class="pixel-box" style="padding: 26px; text-align: center;">
-        <p style="font-family: var(--font-display); font-size: 0.85rem; color: var(--buzz-yellow); margin-bottom: 10px;">
-          [ AWAITING TARGET REPOSITORY ]
-        </p>
-        <p style="color: var(--text-muted); font-size: 0.88rem;">
-          Click <strong>⚡ ANALYZE REPO</strong> above to run <strong>Gemini 4 Argon</strong> against
-          your connected GitHub repository and the CVE datasource.
-        </p>
+    <section id="wizard-step-3" class="wizard-step wizard-step-wide">
+      <div class="wizard-top-nav">
+        <button
+          type="button"
+          class="pixel-btn pixel-btn-sm"
+          onclick="window.buzzGoToStep(2)"
+        >
+          ← SCAN ANOTHER REPO
+        </button>
+        <span class="step-badge">STEP 2 OF 2 // GEMINI 4 ARGON REPORT</span>
+        <button
+          type="button"
+          class="pixel-btn pixel-btn-sm"
+          onclick="window.buzzGoToStep(1)"
+        >
+          ⌂ HOME
+        </button>
       </div>
+
+      <div id="report-container" style="width: 100%;" aria-live="polite"></div>
     </section>
 
-    <!-- ================================================================== -->
-    <!-- LIVE SUPABASE CVE DATASOURCE EXPLORER (HTMX GET /api/cves)         -->
-    <!-- ================================================================== -->
-    <section class="pixel-box" style="padding: 24px;">
-      <div class="cve-section-header">
-        <div>
-          <h2 class="section-title">SUPABASE CVE DATASOURCE</h2>
-          <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: 4px;">
-            Indexed vulnerability signatures accessible to Gemini 4 Argon during repository audits
-          </p>
-        </div>
-
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button
-            type="button"
-            class="pixel-btn pixel-btn-sm"
-            hx-get="/api/cves?ecosystem=all"
-            hx-target="#cve-feed-container"
-            hx-swap="innerHTML"
-          >
-            ALL
-          </button>
-          <button
-            type="button"
-            class="pixel-btn pixel-btn-sm"
-            hx-get="/api/cves?ecosystem=cargo"
-            hx-target="#cve-feed-container"
-            hx-swap="innerHTML"
-          >
-            RUST / CARGO
-          </button>
-          <button
-            type="button"
-            class="pixel-btn pixel-btn-sm"
-            hx-get="/api/cves?ecosystem=npm"
-            hx-target="#cve-feed-container"
-            hx-swap="innerHTML"
-          >
-            NODE / NPM
-          </button>
-          <button
-            type="button"
-            class="pixel-btn pixel-btn-sm"
-            hx-get="/api/cves?ecosystem=pip"
-            hx-target="#cve-feed-container"
-            hx-swap="innerHTML"
-          >
-            PYTHON / PIP
-          </button>
-        </div>
-      </div>
-
-      <div
-        id="cve-feed-container"
-        class="cve-table-wrap"
-        hx-get="/api/cves"
-        hx-trigger="load"
-        hx-swap="innerHTML"
-      >
-        <div style="padding: 16px; color: var(--text-muted); font-family: var(--font-code);">
-          Loading CVE signatures from Supabase...
-        </div>
-      </div>
-    </section>
-
-    <footer class="footer-bar">
-      <span>BUZZ v0.1.0 // PIXEL SECURITY AUDITOR</span>
-      <span>STACK: RUST VERCEL FUNCTIONS + SUPABASE AUTH/DB + GEMINI 4 ARGON + HTMX</span>
-    </footer>
-  </div>
+  </main>
 
   <!-- ==================================================================== -->
-  <!-- LIGHTWEIGHT AUTH & HTMX HEADER BRIDGE                                -->
+  <!-- PIXEL RAIN ANIMATION + WIZARD CONTROLLER + SUPABASE GITHUB AUTH      -->
   <!-- ==================================================================== -->
   <script>
     (function () {
+      // 1. Pixel Rain Canvas Animation (low-res pixel grid scaled crisp)
+      const canvas = document.getElementById('pixel-rain-canvas');
+      const ctx = canvas ? canvas.getContext('2d') : null;
+      const PIXEL_SCALE = 4; // Each rain pixel is a crisp 4x4 screen block
+      let cols = 0;
+      let rows = 0;
+      let drops = [];
+      let splashes = [];
+
+      function resizeRain() {
+        if (!canvas) return;
+        cols = Math.ceil(window.innerWidth / PIXEL_SCALE);
+        rows = Math.ceil(window.innerHeight / PIXEL_SCALE);
+        canvas.width = cols;
+        canvas.height = rows;
+
+        const dropCount = Math.min(95, Math.floor(cols * 0.35));
+        drops = [];
+        for (let i = 0; i < dropCount; i++) {
+          drops.push({
+            x: Math.floor(Math.random() * cols),
+            y: Math.floor(Math.random() * rows),
+            len: 3 + (i % 4),
+            speed: 1 + (i % 2),
+            bright: i % 5 === 0
+          });
+        }
+      }
+
+      function stepRain() {
+        if (!ctx) return;
+        ctx.clearRect(0, 0, cols, rows);
+
+        for (let i = 0; i < drops.length; i++) {
+          const d = drops[i];
+          // Tail pixels
+          ctx.fillStyle = d.bright ? 'rgba(130, 215, 255, 0.55)' : 'rgba(65, 130, 215, 0.32)';
+          for (let t = 1; t < d.len; t++) {
+            ctx.fillRect(d.x, d.y - t, 1, 1);
+          }
+          // Bright head pixel
+          ctx.fillStyle = d.bright ? 'rgba(220, 245, 255, 0.82)' : 'rgba(110, 175, 245, 0.55)';
+          ctx.fillRect(d.x, d.y, 1, 1);
+
+          d.y += d.speed;
+          if (d.y > rows) {
+            // Spawn tiny 2-pixel splash near bottom
+            if (Math.random() < 0.35) {
+              splashes.push({ x: d.x, y: rows - 2, life: 3 });
+            }
+            d.y = -d.len - Math.floor(Math.random() * 16);
+            d.x = Math.floor(Math.random() * cols);
+          }
+        }
+
+        // Draw splashes
+        ctx.fillStyle = 'rgba(155, 220, 255, 0.5)';
+        for (let s = splashes.length - 1; s >= 0; s--) {
+          const sp = splashes[s];
+          ctx.fillRect(sp.x - 1, sp.y, 1, 1);
+          ctx.fillRect(sp.x + 1, sp.y, 1, 1);
+          sp.life -= 1;
+          if (sp.life <= 0) splashes.splice(s, 1);
+        }
+      }
+
+      resizeRain();
+      window.addEventListener('resize', resizeRain);
+      setInterval(stepRain, 55);
+
+      // 2. Wizard Navigation Controller
+      window.buzzGoToStep = function (stepNumber) {
+        const steps = [1, 2, 3];
+        steps.forEach(function (n) {
+          const el = document.getElementById('wizard-step-' + n);
+          if (el) {
+            if (n === stepNumber) {
+              el.classList.add('active');
+            } else {
+              el.classList.remove('active');
+            }
+          }
+        });
+        window.scrollTo({ top: 0, behavior: 'instant' });
+      };
+
+      // 3. Supabase GitHub OAuth & HTMX Header Bridge
       let supabaseClient = null;
       let githubProviderToken = localStorage.getItem('buzz_gh_token') || '';
       let githubUserHandle = localStorage.getItem('buzz_gh_user') || '';
@@ -262,14 +276,13 @@
         if (!dot || !label) return;
         if (githubUserHandle || githubProviderToken) {
           dot.className = 'led-dot';
-          label.textContent = 'GH: ' + (githubUserHandle || 'CONNECTED');
+          label.textContent = 'GITHUB CONNECTED: ' + (githubUserHandle || 'READY');
         } else {
           dot.className = 'led-dot warn';
-          label.textContent = 'CONNECT GITHUB';
+          label.textContent = 'CONNECT GITHUB WITH SUPABASE';
         }
       }
 
-      // Attach GitHub OAuth provider token to every HTMX request so Rust functions can read private/public repos
       document.body.addEventListener('htmx:configRequest', function (evt) {
         if (githubProviderToken) {
           evt.detail.headers['X-GitHub-Token'] = githubProviderToken;
@@ -279,7 +292,6 @@
         }
       });
 
-      // Initialize Supabase Auth client from /api/auth_config
       async function initSupabaseAuth() {
         updateAuthBadge();
         try {
@@ -299,11 +311,13 @@
               localStorage.setItem('buzz_gh_user', githubUserHandle);
               updateAuthBadge();
               htmx.ajax('GET', '/api/repos', { target: '#connected-repos-slot', swap: 'innerHTML' });
+              // If returning from GitHub OAuth redirect, open Step 2 automatically
+              if (window.location.hash.includes('access_token')) {
+                window.buzzGoToStep(2);
+              }
             }
           }
-        } catch (_) {
-          // Running without live backend or in local demo mode
-        }
+        } catch (_) {}
       }
 
       window.buzzConnectGitHub = async function () {
@@ -317,10 +331,9 @@
           });
           if (!error) return;
         }
-        // Fallback interactive GitHub token / username prompt when Supabase OAuth env vars are not yet set
         const input = window.prompt(
-          'Supabase GitHub OAuth is in Demo Mode (set SUPABASE_URL & SUPABASE_ANON_KEY in Vercel to enable 1-click OAuth redirect).\n\nEnter your GitHub username (or a Personal Access Token starting with ghp_) to connect:',
-          githubUserHandle || 'octocat'
+          'Enter your GitHub username (or Personal Access Token starting with ghp_) to load your repositories:',
+          githubUserHandle || 'nisargap'
         );
         if (input && input.trim()) {
           const trimmed = input.trim();

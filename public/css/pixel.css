@@ -1,40 +1,39 @@
 /* ==========================================================================
-   Buzz — Retro Pixel-Art Stylesheet (public/css/pixel.css)
-   Built for HTML + HTMX + Gemini 4 Argon Vulnerability Reports
+   Buzz — Pixelated Dark-to-Dark-Blue Gradient, Rain & Wizard UI
    ========================================================================== */
 
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Silkscreen:wght@400;700&family=VT323&family=JetBrains+Mono:wght@400;600&display=swap');
 
 :root {
-  --bg-deep: #0d0a1a;
-  --bg-panel: #17122b;
-  --bg-panel-alt: #211a3d;
-  --bg-terminal: #090712;
-  --border-dark: #07050e;
-  --border-light: #4a3d7a;
-  --border-gold: #ffd83d;
+  --bg-top: #04050b;
+  --bg-mid-1: #070b18;
+  --bg-mid-2: #0a1228;
+  --bg-mid-3: #0e1b3d;
+  --bg-bottom: #13285c;
 
-  --text-main: #f5f2ff;
-  --text-muted: #a79ec7;
-  --text-dim: #6f6496;
+  --panel-bg: rgba(8, 13, 30, 0.92);
+  --panel-alt: #0f1938;
+  --terminal-bg: #050813;
+
+  --border-dark: #020308;
+  --border-blue: #29488a;
+  --border-cyan: #48d1ff;
+  --border-gold: #ffe047;
+
+  --text-main: #f2f6ff;
+  --text-muted: #94a9d6;
+  --text-dim: #5d74a6;
 
   --buzz-yellow: #ffe047;
   --buzz-amber: #ffa800;
-  --buzz-cloud: #d9e6ff;
-  --buzz-cyan: #38f2ff;
+  --buzz-cyan: #48d1ff;
   --buzz-green: #2ee68a;
-  --buzz-purple: #9d6bff;
 
   --sev-critical: #ff2e63;
-  --sev-critical-bg: #360c1c;
   --sev-high: #ff8c32;
-  --sev-high-bg: #381d0a;
-  --sev-medium: #ffd83d;
-  --sev-medium-bg: #332a09;
-  --sev-low: #38f2ff;
-  --sev-low-bg: #0b2c36;
+  --sev-medium: #ffe047;
+  --sev-low: #48d1ff;
   --sev-clean: #2ee68a;
-  --sev-clean-bg: #0a2e1f;
 
   --font-display: 'Press Start 2P', monospace;
   --font-pixel-ui: 'Silkscreen', monospace;
@@ -49,117 +48,176 @@
 }
 
 html, body {
-  background-color: var(--bg-deep);
+  min-height: 100vh;
   color: var(--text-main);
   font-family: var(--font-pixel-ui);
   line-height: 1.5;
-  min-height: 100vh;
+  overflow-x: hidden;
   image-rendering: pixelated;
+  background-color: var(--bg-top);
+  /* Stepped pixelated dark-to-dark-blue gradient fade */
   background-image:
-    radial-gradient(rgba(255, 224, 71, 0.08) 2px, transparent 2px),
-    radial-gradient(rgba(56, 242, 255, 0.06) 2px, transparent 2px),
-    linear-gradient(to bottom, #0d0a1a 0%, #140f29 50%, #0b0816 100%);
-  background-size: 32px 32px, 48px 48px, 100% 100%;
-  background-position: 0 0, 16px 16px, 0 0;
+    linear-gradient(
+      to bottom,
+      #03040a 0%,
+      #03040a 12%,
+      #050814 12%,
+      #050814 25%,
+      #070d1f 25%,
+      #070d1f 38%,
+      #0a132c 38%,
+      #0a132c 52%,
+      #0d1a3a 52%,
+      #0d1a3a 66%,
+      #10214a 66%,
+      #10214a 80%,
+      #142a5c 80%,
+      #142a5c 92%,
+      #18336e 92%,
+      #18336e 100%
+    );
+  background-attachment: fixed;
 }
 
-/* Subtle CRT scanline overlay */
-body::after {
+/* Pixelated dither matrix overlay on top of the stepped gradient */
+body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0) 0px,
-    rgba(255, 255, 255, 0) 3px,
-    rgba(0, 0, 0, 0.14) 3px,
-    rgba(0, 0, 0, 0.14) 4px
-  );
-  z-index: 999;
+  z-index: 0;
+  background-image:
+    radial-gradient(rgba(72, 209, 255, 0.06) 2px, transparent 2px),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0px,
+      rgba(0, 0, 0, 0) 3px,
+      rgba(2, 4, 12, 0.22) 3px,
+      rgba(2, 4, 12, 0.22) 4px
+    );
+  background-size: 24px 24px, 100% 4px;
 }
 
-.page-shell {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 24px 20px 80px;
+/* Fullscreen Pixel Rain Canvas */
+#pixel-rain-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 1;
+  image-rendering: pixelated;
 }
 
 /* ==========================================================================
-   PIXEL FRAME & CARD UTILITIES
+   WIZARD SHELL & STEPS
    ========================================================================== */
 
-.pixel-box {
-  background: var(--bg-panel);
-  border: 4px solid var(--border-light);
-  box-shadow:
-    0 0 0 4px var(--border-dark),
-    8px 8px 0 0 var(--border-dark);
+.wizard-shell {
   position: relative;
+  z-index: 2;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px;
 }
 
-.pixel-box-gold {
-  background: var(--bg-panel);
-  border: 4px solid var(--buzz-yellow);
-  box-shadow:
-    0 0 0 4px var(--border-dark),
-    8px 8px 0 0 var(--border-dark);
+.wizard-step {
+  display: none;
+  width: 100%;
+  max-width: 560px;
+  animation: step-appear 0.18s steps(3, end);
+}
+
+.wizard-step.active {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.wizard-step.wizard-step-wide {
+  max-width: 920px;
+}
+
+@keyframes step-appear {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ==========================================================================
-   TOP NAVIGATION BAR
+   STEP 1: MINIMAL FRONT PAGE (JUST BUZZ LOGO + ANALYZE BUTTON)
    ========================================================================== */
 
-.topbar {
+.front-hero {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 14px 20px;
-  margin-bottom: 32px;
+  text-align: center;
+  gap: 26px;
 }
 
-.brand-cluster {
+.front-logo-wrap {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 14px;
-  text-decoration: none;
-  color: var(--text-main);
+  justify-content: center;
+  padding: 12px;
+  filter: drop-shadow(0 12px 0 rgba(2, 4, 12, 0.65));
 }
 
-.brand-logo-sm {
-  width: 44px;
-  height: 44px;
+.front-logo-svg {
+  width: 210px;
+  height: 210px;
   image-rendering: pixelated;
   animation: pixel-float 1.6s steps(4, end) infinite;
 }
 
-.brand-title {
+@keyframes pixel-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+.front-wordmark {
   font-family: var(--font-display);
-  font-size: 1.25rem;
+  font-size: 2.2rem;
   color: var(--buzz-yellow);
-  text-shadow: 3px 3px 0 var(--border-dark);
-  letter-spacing: 1px;
-}
-
-.brand-subtitle {
-  display: block;
-  font-size: 0.72rem;
-  color: var(--buzz-cyan);
-  margin-top: 2px;
-}
-
-.topbar-right {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
+  text-shadow:
+    4px 4px 0 var(--border-dark),
+    0 0 18px rgba(255, 224, 71, 0.28);
+  letter-spacing: 4px;
 }
 
 /* ==========================================================================
-   PIXEL BUTTONS & INPUTS
+   PIXEL BUTTONS & CARDS
    ========================================================================== */
+
+.pixel-box {
+  width: 100%;
+  background: var(--panel-bg);
+  border: 4px solid var(--border-blue);
+  box-shadow:
+    0 0 0 4px var(--border-dark),
+    8px 8px 0 0 var(--border-dark);
+  padding: 28px;
+}
+
+.pixel-box-gold {
+  width: 100%;
+  background: var(--panel-bg);
+  border: 4px solid var(--buzz-yellow);
+  box-shadow:
+    0 0 0 4px var(--border-dark),
+    8px 8px 0 0 var(--border-dark);
+  padding: 28px;
+}
 
 .pixel-btn {
   display: inline-flex;
@@ -169,21 +227,21 @@ body::after {
   font-family: var(--font-display);
   font-size: 0.78rem;
   text-transform: uppercase;
-  padding: 12px 18px;
+  padding: 13px 20px;
   cursor: pointer;
   border: 3px solid var(--border-dark);
-  background: var(--bg-panel-alt);
+  background: var(--panel-alt);
   color: var(--text-main);
   box-shadow:
-    inset -3px -3px 0 0 rgba(0, 0, 0, 0.45),
-    inset 3px 3px 0 0 rgba(255, 255, 255, 0.18),
+    inset -3px -3px 0 0 rgba(0, 0, 0, 0.5),
+    inset 3px 3px 0 0 rgba(255, 255, 255, 0.14),
     4px 4px 0 0 var(--border-dark);
   transition: transform 0.05s steps(2, end);
   text-decoration: none;
 }
 
 .pixel-btn:hover {
-  background: #2c2252;
+  background: #172757;
   color: var(--buzz-yellow);
 }
 
@@ -196,10 +254,10 @@ body::after {
 
 .pixel-btn-primary {
   background: var(--buzz-yellow);
-  color: #120d24;
+  color: #090d1c;
   font-weight: 700;
-  font-size: 0.9rem;
-  padding: 16px 26px;
+  font-size: 1rem;
+  padding: 18px 34px;
   box-shadow:
     inset -4px -4px 0 0 #d48800,
     inset 4px 4px 0 0 #fff7b2,
@@ -208,21 +266,18 @@ body::after {
 
 .pixel-btn-primary:hover {
   background: #ffea75;
-  color: #090614;
+  color: #04060e;
 }
 
 .pixel-btn-github {
-  background: #24292f;
+  width: 100%;
+  background: #1b2234;
   color: #ffffff;
-  border-color: #090712;
-  box-shadow:
-    inset -3px -3px 0 0 #121518,
-    inset 3px 3px 0 0 #424a53,
-    4px 4px 0 0 var(--border-dark);
+  padding: 14px 18px;
 }
 
 .pixel-btn-github:hover {
-  background: #30363d;
+  background: #25304a;
   color: var(--buzz-cyan);
 }
 
@@ -234,151 +289,97 @@ body::after {
 .pixel-input,
 .pixel-select {
   width: 100%;
-  background: var(--bg-terminal);
+  background: var(--terminal-bg);
   color: var(--text-main);
   font-family: var(--font-code);
   font-size: 0.95rem;
-  padding: 13px 16px;
-  border: 3px solid var(--border-light);
-  box-shadow: inset 3px 3px 0 0 #040308;
+  padding: 14px 16px;
+  border: 3px solid var(--border-blue);
+  box-shadow: inset 3px 3px 0 0 #020308;
   outline: none;
 }
 
 .pixel-input:focus,
 .pixel-select:focus {
   border-color: var(--buzz-yellow);
-  box-shadow:
-    inset 3px 3px 0 0 #040308,
-    0 0 0 2px rgba(255, 224, 71, 0.25);
 }
 
 /* ==========================================================================
-   HERO SECTION & FLOATING MASCOT
+   WIZARD STEP HEADERS & INDICATORS
    ========================================================================== */
 
-.hero-grid {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 28px;
-  padding: 28px;
-  margin-bottom: 32px;
-  align-items: center;
-}
-
-@media (max-width: 820px) {
-  .hero-grid {
-    grid-template-columns: 1fr;
-    text-align: center;
-  }
-}
-
-.mascot-stage {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(circle at 50% 42%, rgba(255, 224, 71, 0.22), rgba(23, 18, 43, 0) 70%);
-  border: 3px dashed var(--border-light);
-  padding: 20px 16px;
-}
-
-.mascot-hero-svg {
-  width: 168px;
-  height: 168px;
-  image-rendering: pixelated;
-  animation: pixel-float 1.8s steps(4, end) infinite;
-}
-
-@keyframes pixel-float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-8px); }
-}
-
-.mascot-caption {
-  margin-top: 10px;
-  font-family: var(--font-terminal);
-  font-size: 1.25rem;
-  color: var(--buzz-yellow);
-  letter-spacing: 0.5px;
-}
-
-.hero-copy h1 {
-  font-family: var(--font-display);
-  font-size: 1.55rem;
-  line-height: 1.45;
-  color: var(--text-main);
-  text-shadow: 4px 4px 0 var(--border-dark);
-  margin-bottom: 12px;
-}
-
-.hero-copy h1 .highlight-argon {
-  color: var(--buzz-yellow);
-}
-
-.hero-lead {
-  color: var(--text-muted);
-  font-size: 0.92rem;
-  margin-bottom: 20px;
-}
-
-/* ==========================================================================
-   ANALYZE REPO CONSOLE FORM
-   ========================================================================== */
-
-.analyzer-form {
-  background: rgba(9, 7, 18, 0.72);
-  border: 3px solid var(--border-light);
-  padding: 18px;
-}
-
-.analyzer-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 14px;
-  align-items: stretch;
-}
-
-@media (max-width: 680px) {
-  .analyzer-row {
-    grid-template-columns: 1fr;
-  }
-}
-
-.analyzer-toolbar {
+.wizard-top-nav {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
+  margin-bottom: 16px;
+}
+
+.step-badge {
+  font-family: var(--font-display);
+  font-size: 0.65rem;
+  color: var(--buzz-cyan);
+  background: var(--terminal-bg);
+  border: 2px solid var(--border-blue);
+  padding: 6px 10px;
+}
+
+.wizard-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--buzz-yellow);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.wizard-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+.wizard-divider {
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin: 16px 0;
+  position: relative;
 }
 
 .preset-chips {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.preset-label {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
+  margin-top: 12px;
 }
 
 .chip-btn {
-  background: var(--bg-panel-alt);
+  background: var(--panel-alt);
   color: var(--buzz-cyan);
-  border: 2px solid var(--border-light);
+  border: 2px solid var(--border-blue);
   font-family: var(--font-code);
-  font-size: 0.75rem;
-  padding: 4px 10px;
+  font-size: 0.74rem;
+  padding: 5px 10px;
   cursor: pointer;
 }
 
 .chip-btn:hover {
   border-color: var(--buzz-yellow);
   color: var(--buzz-yellow);
+}
+
+.led-dot {
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+  background: var(--buzz-green);
+  box-shadow: 0 0 6px var(--buzz-green);
+}
+
+.led-dot.warn {
+  background: var(--buzz-yellow);
+  box-shadow: 0 0 6px var(--buzz-yellow);
 }
 
 /* ==========================================================================
@@ -397,15 +398,15 @@ body::after {
 .scan-loader {
   margin-top: 18px;
   padding: 16px;
-  background: var(--bg-terminal);
+  background: var(--terminal-bg);
   border: 3px solid var(--buzz-yellow);
   align-items: center;
   gap: 16px;
 }
 
 .pixel-spinner {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   background: var(--buzz-yellow);
   box-shadow: 4px 4px 0 var(--buzz-amber);
   animation: pixel-spin 0.6s steps(4, end) infinite;
@@ -422,48 +423,17 @@ body::after {
 
 .scan-loader-text {
   font-family: var(--font-terminal);
-  font-size: 1.3rem;
+  font-size: 1.25rem;
   color: var(--buzz-yellow);
 }
 
 /* ==========================================================================
-   STATUS & TELEMETRY BADGES
+   REPORT CONTAINER & VULNERABILITY CARDS (STEP 3)
    ========================================================================== */
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--bg-terminal);
-  border: 2px solid var(--border-light);
-  font-size: 0.72rem;
-}
-
-.led-dot {
-  width: 10px;
-  height: 10px;
-  display: inline-block;
-  background: var(--buzz-green);
-  box-shadow: 0 0 6px var(--buzz-green);
-}
-
-.led-dot.warn {
-  background: var(--buzz-yellow);
-  box-shadow: 0 0 6px var(--buzz-yellow);
-}
-
-/* ==========================================================================
-   REPORT CONTAINER & VULNERABILITY CARDS
-   ========================================================================== */
-
-.report-section {
-  margin-bottom: 36px;
-}
 
 .report-header-card {
   padding: 24px;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .report-Banner-top {
@@ -471,15 +441,15 @@ body::after {
   align-items: flex-start;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 20px;
-  margin-bottom: 20px;
-  padding-bottom: 18px;
-  border-bottom: 3px dashed var(--border-light);
+  gap: 18px;
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 3px dashed var(--border-blue);
 }
 
 .report-repo-title {
   font-family: var(--font-display);
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   color: var(--buzz-yellow);
   margin-bottom: 8px;
 }
@@ -487,30 +457,30 @@ body::after {
 .report-meta-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  font-size: 0.75rem;
+  gap: 8px;
+  font-size: 0.74rem;
   color: var(--text-muted);
 }
 
 .meta-tag {
-  background: var(--bg-terminal);
-  border: 2px solid var(--border-light);
-  padding: 4px 10px;
+  background: var(--terminal-bg);
+  border: 2px solid var(--border-blue);
+  padding: 4px 9px;
   font-family: var(--font-code);
 }
 
 .grade-box {
   display: flex;
   align-items: center;
-  gap: 16px;
-  background: var(--bg-terminal);
-  border: 3px solid var(--border-light);
-  padding: 12px 18px;
+  gap: 14px;
+  background: var(--terminal-bg);
+  border: 3px solid var(--border-blue);
+  padding: 10px 16px;
 }
 
 .grade-letter {
   font-family: var(--font-display);
-  font-size: 2rem;
+  font-size: 1.8rem;
   line-height: 1;
   padding: 10px 14px;
   border: 3px solid var(--border-dark);
@@ -522,13 +492,13 @@ body::after {
 .grade-D, .grade-F { background: var(--sev-critical); color: #ffffff; }
 
 .risk-meter-wrap {
-  margin: 16px 0;
+  margin: 14px 0;
 }
 
 .risk-meter-bar {
-  height: 20px;
-  background: var(--bg-terminal);
-  border: 3px solid var(--border-light);
+  height: 18px;
+  background: var(--terminal-bg);
+  border: 3px solid var(--border-blue);
   padding: 2px;
   display: flex;
 }
@@ -539,29 +509,30 @@ body::after {
     to right,
     var(--sev-critical) 0px,
     var(--sev-critical) 12px,
-    #17122b 12px,
-    #17122b 15px
+    #080d1e 12px,
+    #080d1e 15px
   );
 }
 
 .summary-callout {
-  background: var(--bg-terminal);
+  background: var(--terminal-bg);
   border-left: 6px solid var(--buzz-cyan);
-  padding: 14px 18px;
-  font-size: 0.88rem;
+  padding: 14px 16px;
+  font-size: 0.86rem;
   color: var(--text-main);
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .findings-grid {
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 .finding-card {
-  background: var(--bg-panel);
-  border: 4px solid var(--border-light);
+  background: var(--panel-bg);
+  border: 4px solid var(--border-blue);
   box-shadow: 6px 6px 0 0 var(--border-dark);
   padding: 20px;
 }
@@ -576,7 +547,7 @@ body::after {
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 12px;
 }
 
@@ -584,13 +555,13 @@ body::after {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .sev-badge {
   font-family: var(--font-display);
-  font-size: 0.68rem;
-  padding: 6px 10px;
+  font-size: 0.65rem;
+  padding: 5px 9px;
   border: 2px solid var(--border-dark);
   text-transform: uppercase;
 }
@@ -603,25 +574,25 @@ body::after {
 .cve-id-badge {
   font-family: var(--font-code);
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: var(--buzz-yellow);
-  background: var(--bg-terminal);
+  background: var(--terminal-bg);
   border: 2px solid var(--buzz-yellow);
   padding: 4px 10px;
 }
 
 .cvss-pill {
   font-family: var(--font-code);
-  font-size: 0.78rem;
-  background: var(--bg-terminal);
-  border: 2px solid var(--border-light);
-  padding: 4px 10px;
+  font-size: 0.76rem;
+  background: var(--terminal-bg);
+  border: 2px solid var(--border-blue);
+  padding: 4px 9px;
   color: var(--text-muted);
 }
 
 .finding-title {
   font-family: var(--font-display);
-  font-size: 0.92rem;
+  font-size: 0.88rem;
   color: var(--text-main);
   margin-bottom: 10px;
   line-height: 1.4;
@@ -631,30 +602,30 @@ body::after {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: var(--bg-terminal);
-  border: 2px solid var(--border-light);
+  background: var(--terminal-bg);
+  border: 2px solid var(--border-blue);
   padding: 5px 12px;
   font-family: var(--font-code);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--buzz-cyan);
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .finding-explanation {
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   color: var(--text-muted);
   margin-bottom: 14px;
 }
 
 .remediation-box {
-  background: var(--bg-terminal);
+  background: var(--terminal-bg);
   border: 2px solid var(--buzz-green);
-  padding: 12px 16px;
+  padding: 12px 14px;
 }
 
 .remediation-label {
   font-family: var(--font-display);
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   color: var(--buzz-green);
   margin-bottom: 6px;
   display: block;
@@ -662,69 +633,8 @@ body::after {
 
 .remediation-code {
   font-family: var(--font-code);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: #d8ffe9;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-/* ==========================================================================
-   CVE DATASOURCE EXPLORER DRAWER / SECTION
-   ========================================================================== */
-
-.cve-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-bottom: 16px;
-}
-
-.section-title {
-  font-family: var(--font-display);
-  font-size: 1rem;
-  color: var(--buzz-yellow);
-  text-shadow: 3px 3px 0 var(--border-dark);
-}
-
-.cve-table-wrap {
-  overflow-x: auto;
-}
-
-.pixel-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.82rem;
-}
-
-.pixel-table th,
-.pixel-table td {
-  padding: 12px 14px;
-  text-align: left;
-  border-bottom: 2px solid var(--border-light);
-}
-
-.pixel-table th {
-  font-family: var(--font-display);
-  font-size: 0.65rem;
-  color: var(--buzz-cyan);
-  background: var(--bg-terminal);
-  text-transform: uppercase;
-}
-
-.pixel-table tr:hover td {
-  background: rgba(255, 224, 71, 0.05);
-}
-
-.footer-bar {
-  margin-top: 56px;
-  padding-top: 24px;
-  border-top: 3px dashed var(--border-light);
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  font-size: 0.75rem;
-  color: var(--text-dim);
 }

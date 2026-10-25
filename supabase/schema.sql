@@ -105,7 +105,7 @@ CREATE POLICY "Public read access to CVEs"
     ON public.cves FOR SELECT
     USING (true);
 
--- Anyone can view & insert scan reports (or scope to auth.uid() in strict mode)
+-- Anyone can view scan reports, but write access is restricted to service_role or owner
 DROP POLICY IF EXISTS "Read access to scans" ON public.scans;
 CREATE POLICY "Read access to scans"
     ON public.scans FOR SELECT
@@ -114,7 +114,7 @@ CREATE POLICY "Read access to scans"
 DROP POLICY IF EXISTS "Insert access to scans" ON public.scans;
 CREATE POLICY "Insert access to scans"
     ON public.scans FOR INSERT
-    WITH CHECK (true);
+    WITH CHECK (auth.role() = 'service_role' OR auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Read access to scan findings" ON public.scan_findings;
 CREATE POLICY "Read access to scan findings"
@@ -124,8 +124,15 @@ CREATE POLICY "Read access to scan findings"
 DROP POLICY IF EXISTS "Insert access to scan findings" ON public.scan_findings;
 CREATE POLICY "Insert access to scan findings"
     ON public.scan_findings FOR INSERT
-    WITH CHECK (true);
+    WITH CHECK (auth.role() = 'service_role');
 
+DROP POLICY IF EXISTS "Update access to scan findings" ON public.scan_findings;
+CREATE POLICY "Update access to scan findings"
+    ON public.scan_findings FOR UPDATE
+    USING (auth.role() = 'service_role')
+    WITH CHECK (auth.role() = 'service_role');
+
+-- Redundant drop to safely absorb any trailing policy definition in schema.sql
 DROP POLICY IF EXISTS "Update access to scan findings" ON public.scan_findings;
 CREATE POLICY "Update access to scan findings"
     ON public.scan_findings FOR UPDATE

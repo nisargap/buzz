@@ -2497,7 +2497,7 @@ pub mod templates {
             let date_clean = escape_html(&date_short.replace('T', " "));
 
             rows.push_str(&format!(
-                r##"<div class="saved-scan-row">
+                r##"<div class="saved-scan-row" data-scan-id="{scan_id}">
                     <div class="saved-scan-info">
                         <span class="grade-pill grade-{grade}">{grade}</span>
                         <div>

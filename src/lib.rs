@@ -2789,131 +2789,22 @@ pub mod templates {
     };
 
     pub fn render_component_diagram(repo_full_name: &str, diagram: &CodebaseDiagram) -> String {
-        let mut effective_edges = diagram.edges.clone();
-        if effective_edges.is_empty() && diagram.nodes.len() >= 2 {
-            for (idx, win) in diagram.nodes.windows(2).enumerate() {
-                effective_edges.push(super::DiagramEdge {
-                    from: win[0].id.clone(),
-                    to: win[1].id.clone(),
-                    label: "State Transition".to_string(),
-                    importance: if idx <= 1 {
-                        "primary".to_string()
-                    } else {
-                        "secondary".to_string()
-                    },
-                });
-            }
-        }
-
-        let mut state_nodes_html = String::new();
-        let mut initial_inspector_html = String::new();
+        let mut horizontal_flow_html = String::new();
+        let mut initial_detail_html = String::new();
 
         for (idx, node) in diagram.nodes.iter().enumerate() {
             let layer_upper = node.layer.to_uppercase();
-            let is_primary_node = if !node.importance.trim().is_empty() {
+            let is_primary = if !node.importance.trim().is_empty() {
                 node.importance.trim().eq_ignore_ascii_case("primary")
             } else {
-                idx < 3 || layer_upper == "FRONTEND" || layer_upper == "API" || layer_upper == "CORE"
+                idx < 3 || layer_upper != "DATA"
             };
-
-            let tier_class = if is_primary_node {
+            let tier_class = if is_primary {
                 "primary-state"
             } else {
                 "secondary-state"
             };
-            let tier_pill_class = if is_primary_node {
-                "primary"
-            } else {
-                "secondary"
-            };
-            let tier_label = if is_primary_node {
-                "★ PRIMARY USER FLOW"
-            } else {
-                "┅ SECONDARY / SYSTEM PATH"
-            };
             let selected_class = if idx == 0 { "selected-state" } else { "" };
-
-            // Collect outgoing and incoming transitions for this state node
-            let mut outgoing_edges_html = String::new();
-            let mut inspector_transitions_html = String::new();
-
-            for (e_idx, edge) in effective_edges.iter().enumerate() {
-                let edge_is_primary = if !edge.importance.trim().is_empty() {
-                    edge.importance.trim().eq_ignore_ascii_case("primary")
-                } else {
-                    e_idx < 2 || !edge.label.to_ascii_lowercase().contains("background")
-                };
-                let edge_tier_class = if edge_is_primary {
-                    "edge-primary"
-                } else {
-                    "edge-secondary"
-                };
-                let edge_badge = if edge_is_primary {
-                    "★ PRIMARY FLOW"
-                } else {
-                    "┅ SECONDARY PATH"
-                };
-                let arrow_glyph = if edge_is_primary { "═══►" } else { "───►" };
-
-                if edge.from == node.id {
-                    let target_label = diagram
-                        .nodes
-                        .iter()
-                        .find(|n| n.id == edge.to)
-                        .map(|n| n.label.as_str())
-                        .unwrap_or(edge.to.as_str());
-
-                    outgoing_edges_html.push_str(&format!(
-                        r#"<div class="sm-transition-edge {edge_tier}" data-flow-tier="{tier_key}" onclick="window.buzzJumpToStateNode('{to_id}')">
-                            <span>[{badge}]</span>
-                            <span>{label}</span>
-                            <span>{arrow}</span>
-                            <strong style="text-decoration:underline;">{target}</strong>
-                        </div>"#,
-                        edge_tier = edge_tier_class,
-                        tier_key = if edge_is_primary { "primary" } else { "secondary" },
-                        to_id = escape_html(&edge.to),
-                        badge = edge_badge,
-                        label = escape_html(&edge.label),
-                        arrow = arrow_glyph,
-                        target = escape_html(target_label)
-                    ));
-
-                    inspector_transitions_html.push_str(&format!(
-                        r#"<div class="sm-transition-edge {edge_tier}" onclick="window.buzzJumpToStateNode('{to_id}')">
-                            <span>OUT {arrow} <strong>{target}</strong>: {label}</span>
-                        </div>"#,
-                        edge_tier = edge_tier_class,
-                        to_id = escape_html(&edge.to),
-                        arrow = arrow_glyph,
-                        target = escape_html(target_label),
-                        label = escape_html(&edge.label)
-                    ));
-                } else if edge.to == node.id {
-                    let source_label = diagram
-                        .nodes
-                        .iter()
-                        .find(|n| n.id == edge.from)
-                        .map(|n| n.label.as_str())
-                        .unwrap_or(edge.from.as_str());
-
-                    inspector_transitions_html.push_str(&format!(
-                        r#"<div class="sm-transition-edge {edge_tier}" onclick="window.buzzJumpToStateNode('{from_id}')">
-                            <span>IN ◄─── <strong>{source}</strong>: {label}</span>
-                        </div>"#,
-                        edge_tier = edge_tier_class,
-                        from_id = escape_html(&edge.from),
-                        source = escape_html(source_label),
-                        label = escape_html(&edge.label)
-                    ));
-                }
-            }
-
-            if inspector_transitions_html.is_empty() {
-                inspector_transitions_html.push_str(
-                    r#"<div style="font-size:0.84rem;color:var(--text-dim);">Terminal / standalone state node</div>"#,
-                );
-            }
 
             let mut file_pills_html = String::new();
             for fp in &node.files {
@@ -2924,75 +2815,90 @@ pub mod templates {
                     clean_fp
                 );
                 file_pills_html.push_str(&format!(
-                    r#"<a href="{url}" target="_blank" rel="noopener noreferrer" class="diag-file-pill" onclick="event.stopPropagation();">📄 {fp} ↗</a>"#,
+                    r#"<a href="{url}" target="_blank" rel="noopener noreferrer" class="diag-file-pill">📄 {fp} ↗</a>"#,
                     url = gh_url,
                     fp = clean_fp
                 ));
             }
 
-            let inspector_payload = format!(
-                r#"<span class="sm-inspector-tag">STATE {step:02} // {layer} // {tier_label}</span>
-                <h4 class="sm-inspector-title">{title}</h4>
+            let detail_payload = format!(
+                r#"<div class="sm-inspector-title">[{layer}] {title}</div>
                 <p class="sm-inspector-desc">{desc}</p>
-                <span class="sm-inspector-section-label">STATE MACHINE TRANSITIONS (CLICK TO FOLLOW)</span>
-                <div class="sm-inspector-transitions">{transitions}</div>
-                <span class="sm-inspector-section-label">SOURCE FILES IN THIS STATE (CLICK TO OPEN ON GITHUB)</span>
                 <div class="diag-files-row">{files}</div>"#,
-                step = idx + 1,
                 layer = escape_html(&layer_upper),
-                tier_label = tier_label,
                 title = escape_html(&node.label),
                 desc = escape_html(&node.description),
-                transitions = inspector_transitions_html,
                 files = file_pills_html
             );
 
             if idx == 0 {
-                initial_inspector_html = inspector_payload.clone();
+                initial_detail_html = detail_payload.clone();
             }
 
-            state_nodes_html.push_str(&format!(
+            horizontal_flow_html.push_str(&format!(
                 r#"<div
                     id="sm-node-{node_id}"
-                    class="sm-state-node {tier_class} {selected_class}"
-                    data-node-id="{node_id}"
-                    data-flow-tier="{tier_key}"
+                    class="mermaid-node-box sm-state-node {tier_class} {selected_class}"
                     onclick="window.buzzSelectStateNode(this)"
                 >
-                    <div class="sm-state-top">
-                        <div class="sm-state-badges">
-                            <span class="sm-state-step-pill">STATE {step:02} // {layer}</span>
-                            <span class="sm-flow-tier-pill {tier_pill_class}">{tier_label}</span>
-                        </div>
-                        <span class="sm-click-hint">▸ CLICK TO INSPECT</span>
-                    </div>
-                    <div class="sm-state-title">{title}</div>
-                    <p class="sm-state-summary">{desc}</p>
-                    <div class="diag-files-row">{files}</div>
-                    <template class="sm-node-inspector-template">{inspector_payload}</template>
+                    <span class="mermaid-node-layer">{layer}</span>
+                    <div class="mermaid-node-title">{title}</div>
+                    <template class="sm-node-inspector-template">{detail_payload}</template>
                 </div>"#,
                 node_id = escape_html(&node.id),
                 tier_class = tier_class,
                 selected_class = selected_class,
-                tier_key = if is_primary_node { "primary" } else { "secondary" },
-                step = idx + 1,
                 layer = escape_html(&layer_upper),
-                tier_pill_class = tier_pill_class,
-                tier_label = tier_label,
                 title = escape_html(&node.label),
-                desc = escape_html(&node.description),
-                files = file_pills_html,
-                inspector_payload = inspector_payload
+                detail_payload = detail_payload
             ));
 
-            if !outgoing_edges_html.is_empty() {
-                state_nodes_html.push_str(&format!(
-                    r#"<div class="sm-transition-connector">
-                        <div class="sm-transition-branch-list">
-                            {outgoing_edges_html}
-                        </div>
-                    </div>"#,
-                    outgoing_edges_html = outgoing_edges_html
+            // Render horizontal arrow to the next component in the pipeline
+            if let Some(next_node) = diagram.nodes.get(idx + 1) {
+                let matching_edge = diagram
+                    .edges
+                    .iter()
+                    .find(|e| e.from == node.id && e.to == next_node.id)
+                    .or_else(|| diagram.edges.iter().find(|e| e.from == node.id));
+
+                let raw_label = matching_edge
+                    .map(|e| e.label.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("Dataflow");
+                let short_label: String = raw_label.chars().take(22).collect();
+
+                let edge_is_secondary = matching_edge
+                    .map(|e| e.importance.trim().eq_ignore_ascii_case("secondary"))
+                    .unwrap_or(!is_primary);
+                let edge_class = if edge_is_secondary {
+                    "secondary-edge"
+                } else {
+                    "primary-edge"
+                };
+                let stroke_color = if edge_is_secondary {
+                    "#6882B8"
+                } else {
+                    "#FFE047"
+                };
+                let dash_attr = if edge_is_secondary {
+                    r#"stroke-dasharray="4 4""#
+                } else {
+                    ""
+                };
+
+                horizontal_flow_html.push_str(&format!(
+                    r##"<div class="mermaid-arrow-lr {edge_class}">
+                        <span class="mermaid-arrow-caption" title="{full_label}">{short_label}</span>
+                        <svg class="mermaid-arrow-svg-lr" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true">
+                            <line x1="0" y1="8" x2="88" y2="8" stroke="{stroke}" stroke-width="2.5" {dash} />
+                            <polygon points="86,2 100,8 86,14" fill="{stroke}" />
+                        </svg>
+                    </div>"##,
+                    edge_class = edge_class,
+                    full_label = escape_html(raw_label),
+                    short_label = escape_html(&short_label),
+                    stroke = stroke_color,
+                    dash = dash_attr
                 ));
             }
         }
@@ -3001,56 +2907,31 @@ pub mod templates {
             r#"<div class="sm-diagram-card">
                 <div class="report-Banner-top" style="margin-bottom:14px;padding-bottom:12px;">
                     <div>
-                        <div class="report-repo-title" style="color:var(--buzz-cyan);font-size:1.05rem;">
-                            🔀 INTERACTIVE STATE MACHINE &amp; USER-FLOW DIAGRAM // {repo}
+                        <div class="report-repo-title" style="color:var(--buzz-cyan);font-size:1.02rem;">
+                            🔀 SYSTEM DESIGN FLOW DIAGRAM // {repo}
                         </div>
-                        <p style="font-family:var(--font-code);font-size:0.92rem;color:var(--text-muted);margin-top:6px;line-height:1.5;">
-                            {summary}
+                        <p style="font-family:var(--font-code);font-size:0.88rem;color:var(--text-muted);margin-top:4px;">
+                            {summary} <span style="color:var(--buzz-yellow);">(Click any component box below to inspect its files)</span>
                         </p>
                     </div>
                 </div>
 
-                <!-- Legend & Interactive Flow Filter Toolbar -->
-                <div class="sm-toolbar">
-                    <div class="sm-legend-pills">
-                        <span class="sm-legend-item">
-                            <span class="sm-legend-line-primary"></span>
-                            <strong style="color:var(--buzz-yellow);">★ Primary User Flow (Critical Path)</strong>
-                        </span>
-                        <span class="sm-legend-item">
-                            <span class="sm-legend-line-secondary"></span>
-                            <span style="color:#9bb1e0;">┅ Secondary / Background Path</span>
-                        </span>
-                    </div>
-
-                    <div class="sm-filter-btns">
-                        <button type="button" class="sm-filter-btn active" onclick="window.buzzFilterDiagramFlows('all', this)">
-                            ALL FLOWS
-                        </button>
-                        <button type="button" class="sm-filter-btn" onclick="window.buzzFilterDiagramFlows('primary', this)">
-                            ★ PRIMARY USER FLOWS ONLY
-                        </button>
-                        <button type="button" class="sm-filter-btn" onclick="window.buzzFilterDiagramFlows('secondary', this)">
-                            ┅ SECONDARY PATHS
-                        </button>
+                <!-- Simple Horizontal Mermaid-Style Flowchart (Left to Right) -->
+                <div class="mermaid-lr-stage">
+                    <div class="mermaid-lr-track">
+                        {horizontal_flow_html}
                     </div>
                 </div>
 
-                <!-- Interactive Split Workspace: State Machine (Left) + Clickable Element Inspector (Right) -->
-                <div class="sm-workspace">
-                    <div id="sm-flow-canvas" class="sm-flow-canvas">
-                        {state_nodes_html}
-                    </div>
-
-                    <aside id="sm-inspector-panel" class="sm-inspector-panel" aria-live="polite">
-                        {initial_inspector_html}
-                    </aside>
+                <!-- Compact Selected Component Detail Bar -->
+                <div id="sm-inspector-panel" class="mermaid-detail-bar" aria-live="polite">
+                    {initial_detail_html}
                 </div>
             </div>"#,
             repo = escape_html(repo_full_name),
             summary = escape_html(&diagram.architecture_summary),
-            state_nodes_html = state_nodes_html,
-            initial_inspector_html = initial_inspector_html
+            horizontal_flow_html = horizontal_flow_html,
+            initial_detail_html = initial_detail_html
         )
     }
 

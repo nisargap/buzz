@@ -7,6 +7,8 @@
   'use strict';
 
   const REQUEST_TIMEOUT_MS = 55000;
+  const AUTH_RETURN_KEY = 'buzz_refactor_return';
+  const AUTH_RETURN_TTL_MS = 10 * 60 * 1000;
   const DEFAULT_RULES = '# Refactor rules\n\n- Preserve behavior, public interfaces, errors, and side effects.\n- Follow the repository\'s existing conventions.\n- Prefer one small, worthwhile simplification over a rewrite.\n- Do not change dependencies, configuration, or tests.\n- If context is insufficient or no change is worthwhile, propose no edits.';
   const GOALS = {
     cleanup: { title: 'Balanced cleanup', rule: 'Find one small readability improvement. Remove redundant plumbing without introducing unnecessary helpers.' },
@@ -163,7 +165,7 @@
     if (!root || !repoInput) return;
     const ui = {};
     [
-      'open-btn', 'back-btn', 'load-btn', 'repo', 'base', 'status', 'settings', 'rules', 'max-files', 'max-lines',
+      'open-btn', 'back-btn', 'load-btn', 'auth', 'connect-btn', 'repo', 'base', 'status', 'settings', 'rules', 'max-files', 'max-lines',
       'file-notice', 'selected-count', 'context-count', 'files', 'context-files', 'feedback', 'generate-btn',
       'review', 'review-heading', 'proposal-base', 'summary', 'rule', 'tradeoffs', 'no-changes', 'changed-lines',
       'edits', 'regenerate-btn', 'reject-btn', 'publish-btn', 'published', 'heading', 'advanced',
@@ -180,11 +182,64 @@
       sourceValue: null, repo: '', token: '', listing: null, files: new Set(), context: new Set(),
       choices: new Map(), editors: [], rulesDirty: false, proposal: null, originals: new Map(),
       reviewToken: '', proposalKey: '', changedLines: 0, manuallyEdited: false, published: false, request: null,
-      stage: 'goal', goal: 'cleanup', consent: false, reviewAccepted: false
+      stage: 'goal', goal: 'cleanup', consent: false, reviewAccepted: false, authRequired: false, connecting: false
     };
 
     function readToken() {
       try { return win.sessionStorage.getItem('buzz_gh_token') || ''; } catch (_) { return ''; }
+    }
+    function clearAuthReturn() {
+      try { win.sessionStorage.removeItem(AUTH_RETURN_KEY); } catch (_) {}
+    }
+    function readAuthReturn() {
+      try {
+        const value = JSON.parse(win.sessionStorage.getItem(AUTH_RETURN_KEY));
+        if (value && typeof value.repo === 'string' && value.repo === normalizeRepo(value.repo) && value.repo &&
+            Object.prototype.hasOwnProperty.call(GOALS, value.goal) && Number.isSafeInteger(value.createdAt) &&
+            Date.now() >= value.createdAt && Date.now() - value.createdAt < AUTH_RETURN_TTL_MS) return value;
+      } catch (_) {}
+      clearAuthReturn();
+      return null;
+    }
+    function resumeAfterAuth() {
+      const saved = readAuthReturn();
+      if (!saved) return false;
+      repoInput.value = saved.repo;
+      syncIdentity();
+      state.goal = saved.goal;
+      win.buzzGoToStep(5);
+      updateControls();
+      if (state.token && !state.authRequired) {
+        clearAuthReturn();
+        if (!state.listing && !state.request) loadFiles();
+      }
+      return true;
+    }
+    function authChanged() {
+      const changed = syncIdentity();
+      if (resumeAfterAuth()) return;
+      if (changed && root.classList.contains('active') && state.repo && state.token && !state.authRequired && !state.request) loadFiles();
+    }
+    async function connectGitHub() {
+      syncIdentity();
+      if (state.request || state.connecting) return;
+      if (!state.repo) { status('Choose a repository before connecting GitHub.', true); return; }
+      state.connecting = true;
+      status('Opening GitHub sign-in. We will bring you back to this repository and goal.');
+      updateControls();
+      try {
+        // Keep only navigation intent across OAuth, never code, credentials, or approval.
+        win.sessionStorage.setItem(AUTH_RETURN_KEY, JSON.stringify({ repo: state.repo, goal: state.goal, createdAt: Date.now() }));
+        if (typeof win.buzzConnectGitHub !== 'function') throw new Error('GitHub sign-in is still loading. Please try again.');
+        await win.buzzConnectGitHub({ requireRepoAccess: true });
+        authChanged();
+      } catch (error) {
+        clearAuthReturn();
+        status(error instanceof Error ? error.message : 'Could not start GitHub sign-in. Please try again.', true);
+      } finally {
+        state.connecting = false;
+        updateControls();
+      }
     }
     function status(message, isError) {
       ui.status.textContent = message;
@@ -213,8 +268,12 @@
       if (focus !== false) ui[stage + '-heading'].focus();
     }
     function updateLoadControl() {
-      ui['load-btn'].hidden = Boolean(state.request) || !['goal', 'scope'].includes(state.stage);
-      ui['load-btn'].disabled = Boolean(state.request) || !state.repo || !state.token;
+      const needsAuth = !state.token || state.authRequired;
+      ui.auth.hidden = !needsAuth;
+      ui['connect-btn'].disabled = Boolean(state.request) || state.connecting || !state.repo;
+      ui['connect-btn'].textContent = state.connecting ? 'OPENING GITHUB…' : state.authRequired ? 'RECONNECT GITHUB' : 'CONNECT GITHUB TO CONTINUE';
+      ui['load-btn'].hidden = needsAuth || state.connecting || Boolean(state.request) || !['goal', 'scope'].includes(state.stage);
+      ui['load-btn'].disabled = Boolean(state.request) || state.connecting || !state.repo || needsAuth;
       ui['load-btn'].textContent = state.listing ? 'REFRESH REPOSITORY FILES' : 'TRY LOADING AGAIN';
     }
     function cancelRequest() {
@@ -270,13 +329,15 @@
       const sourceValue = repoInput.value.trim();
       const token = readToken();
       if (sourceValue === state.sourceValue && token === state.token) return false;
+      if (token !== state.token) state.authRequired = false;
       clearRepository();
       state.sourceValue = sourceValue;
       state.repo = normalizeRepo(sourceValue);
       state.token = token;
       ui.repo.textContent = state.repo || sourceValue || 'No repository selected';
-      status(!token ? 'Go back to sign in with your existing GitHub connection.' :
-        !state.repo ? 'Go back and choose a repository.' : 'Choose a goal. Buzz will handle the setup.', !token || !state.repo);
+      const needsAuth = !token || state.authRequired;
+      status(needsAuth ? 'Connect GitHub below to continue with this repository.' :
+        !state.repo ? 'Go back and choose a repository.' : 'Choose a goal. Buzz will handle the setup.', needsAuth || !state.repo);
       updateControls();
       return true;
     }
@@ -295,7 +356,7 @@
       return new TextEncoder().encode(value).length;
     }
     function generationError(requireConsent) {
-      if (!state.token) return 'Go back to sign in with GitHub first.';
+      if (!state.token || state.authRequired) return 'Connect GitHub below before continuing.';
       if (!state.repo) return 'Go back to choose a repository first.';
       if (!state.listing) return 'Buzz needs to load the repository first. Try loading again.';
       try { validateScope(getScope()); } catch (error) { return error.message; }
@@ -337,7 +398,7 @@
       if (!state.files.size) ui['suggested-files'].appendChild(element('li', '', 'No eligible source file is selected. Choose another repo or use optional customization.'));
     }
     function updateControls() {
-      const busy = Boolean(state.request);
+      const busy = Boolean(state.request) || state.connecting;
       ui.settings.disabled = busy;
       root.setAttribute('aria-busy', String(busy));
       ui['open-btn'].disabled = busy;
@@ -418,7 +479,9 @@
           const message = data && typeof data.error === 'string' ? data.error : 'Refactor request failed (HTTP ' + response.status + ').';
           if (response.status === 401) {
             clearRepository();
-            status(message + ' Go back to reconnect with the existing GitHub login.', true);
+            state.authRequired = true;
+            status('Your GitHub access has expired or was revoked. Reconnect below to continue.' +
+              (kind === 'publish' ? ' Check GitHub for an existing draft before trying again.' : ''), true);
             updateControls();
             return;
           }
@@ -472,7 +535,11 @@
     function loadFiles() {
       syncIdentity();
       if (state.request) return;
-      if (!state.repo || !state.token) { status('Go back to select a repository and sign in with your existing GitHub connection.', true); return; }
+      if (!state.repo || !state.token || state.authRequired) {
+        status(!state.repo ? 'Go back and choose a repository.' : 'Connect GitHub below to load this repository.', true);
+        updateControls();
+        return;
+      }
       clearProposal();
       clearFeedback();
       state.listing = null;
@@ -635,7 +702,7 @@
       syncIdentity();
       win.buzzGoToStep(5);
       ui.heading.focus();
-      if (state.repo && state.token && !state.listing && !state.request) loadFiles();
+      if (state.repo && state.token && !state.authRequired && !state.listing && !state.request) loadFiles();
     };
     Object.keys(GOALS).forEach(function (goal) {
       ui['goal-' + goal].addEventListener('click', function () {
@@ -652,7 +719,8 @@
     });
     ui['scope-back-btn'].addEventListener('click', function () { if (!state.request) setStage('goal'); });
     ui['review-back-btn'].addEventListener('click', function () { if (!state.request && state.proposal) { state.reviewAccepted = false; setStage('review'); updateControls(); } });
-    ui['back-btn'].addEventListener('click', function () { win.buzzGoToStep(2); });
+    ui['back-btn'].addEventListener('click', function () { clearAuthReturn(); win.buzzGoToStep(2); });
+    ui['connect-btn'].addEventListener('click', connectGitHub);
     ui['load-btn'].addEventListener('click', loadFiles);
     ui['generate-btn'].addEventListener('click', generate);
     ui['review-next-btn'].addEventListener('click', reviewNext);
@@ -696,11 +764,11 @@
     });
     repoInput.addEventListener('input', syncIdentity);
     repoInput.addEventListener('change', syncIdentity);
-    win.addEventListener('buzz:auth-change', syncIdentity);
-    win.addEventListener('storage', function (event) { if (!event.key || event.key === 'buzz_gh_token') syncIdentity(); });
-    win.addEventListener('focus', syncIdentity);
-    win.addEventListener('pageshow', syncIdentity);
-    doc.addEventListener('visibilitychange', syncIdentity);
+    win.addEventListener('buzz:auth-change', authChanged);
+    win.addEventListener('storage', function (event) { if (!event.key || event.key === 'buzz_gh_token') authChanged(); });
+    win.addEventListener('focus', authChanged);
+    win.addEventListener('pageshow', authChanged);
+    doc.addEventListener('visibilitychange', authChanged);
     win.addEventListener('buzz:step-change', function (event) {
       syncIdentity();
       if (event.detail.step !== 5 && state.request) {
@@ -712,6 +780,7 @@
     });
     win.addEventListener('pagehide', function () { clearRepository(); updateControls(); });
     syncIdentity();
+    resumeAfterAuth();
   }
 
   return {

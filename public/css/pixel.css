@@ -1280,6 +1280,17 @@ body::before {
   margin-top: 0;
 }
 
+.refactor-auth {
+  margin-top: 14px;
+  padding: 16px;
+  border: 2px solid var(--buzz-yellow);
+  background: var(--terminal-bg);
+}
+
+.refactor-auth .refactor-help:last-child {
+  margin-bottom: 0;
+}
+
 .refactor-status.is-error,
 .refactor-count.is-error {
   color: var(--sev-critical);

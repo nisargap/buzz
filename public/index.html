@@ -75,9 +75,15 @@
         </button>
 
         <!-- Connected GitHub Repo Dropdown Slot (populated via HTMX GET /api/repos) -->
-        <div id="connected-repos-slot" style="margin-top: 12px;"></div>
+        <div
+          id="connected-repos-slot"
+          style="margin-top: 12px;"
+          hx-get="/api/repos"
+          hx-trigger="load"
+          hx-swap="innerHTML"
+        ></div>
 
-        <div class="wizard-divider">— OR ENTER REPOSITORY —</div>
+        <div class="wizard-divider">— OR ENTER ANY GITHUB REPOSITORY —</div>
 
         <!-- HTMX Form posting to Rust Vercel Function: POST /api/analyze -->
         <form
@@ -93,8 +99,8 @@
             name="repo"
             type="text"
             class="pixel-input"
-            placeholder="owner/repo (e.g. acme-labs/payment-gateway-rs)"
-            value="acme-labs/payment-gateway-rs"
+            placeholder="owner/repo (e.g. nisargap/buzz)"
+            value="nisargap/buzz"
             required
             autocomplete="off"
           />
@@ -103,23 +109,23 @@
             <button
               type="button"
               class="chip-btn"
-              onclick="window.buzzSelectRepo('acme-labs/payment-gateway-rs')"
+              onclick="window.buzzSelectRepo('nisargap/buzz')"
             >
-              acme-labs/payment-gateway-rs
+              nisargap/buzz
             </button>
             <button
               type="button"
               class="chip-btn"
-              onclick="window.buzzSelectRepo('nebula-ui/express-checkout-api')"
+              onclick="window.buzzSelectRepo('expressjs/express')"
             >
-              nebula-ui/express-checkout-api
+              expressjs/express
             </button>
             <button
               type="button"
               class="chip-btn"
-              onclick="window.buzzSelectRepo('hyperion-ai/python-rag-worker')"
+              onclick="window.buzzSelectRepo('pallets/flask')"
             >
-              hyperion-ai/python-rag-worker
+              pallets/flask
             </button>
           </div>
 
@@ -128,7 +134,7 @@
             class="pixel-btn pixel-btn-primary"
             style="width: 100%; margin-top: 20px;"
           >
-            ⚡ RUN GEMINI 4 ARGON AUDIT
+            ⚡ LOAD FULL REPO INTO 1M CONTEXT &amp; AUDIT
           </button>
 
           <!-- HTMX Loading Indicator -->
@@ -136,10 +142,10 @@
             <div class="pixel-spinner"></div>
             <div>
               <div class="scan-loader-text">
-                GEMINI 4 ARGON AUDITING REPO &amp; CVEs...
+                INGESTING ENTIRE REPO INTO GEMINI 4 ARGON 1M CONTEXT...
               </div>
               <div style="font-size: 0.72rem; color: var(--text-muted);">
-                Cross-referencing manifests &amp; source tree against Supabase CVE signatures
+                Fetching recursive Git tree → Loading all source files → Matching Supabase CVEs
               </div>
             </div>
           </div>

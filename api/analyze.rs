@@ -22,7 +22,7 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
         .map(|s| s.to_string());
 
     let repo_target = extract_repo_from_body(req.body())
-        .unwrap_or_else(|| "acme-labs/payment-gateway-rs".to_string());
+        .unwrap_or_else(|| "nisargap/buzz".to_string());
 
     // 1. Fetch repository files from GitHub (or built-in connected repo snapshot)
     let snapshot = fetch_repo_snapshot(&client, &config, &repo_target, gh_token.as_deref()).await;

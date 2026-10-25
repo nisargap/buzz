@@ -1324,6 +1324,57 @@ pub struct PatchRequest {
     pub file_path: String,
     pub line_reference: String,
     pub remediation_patch: String,
+    #[serde(default)]
+    pub patch_token: String,
+}
+
+/// Computes a server-side keyed signature binding `/api/apply_patch` requests to findings
+/// legitimately emitted by `/api/analyze`, preventing unauthenticated GITHUB_PAT privilege escalation.
+pub fn compute_patch_signature(
+    config: &AppConfig,
+    repo: &str,
+    branch: &str,
+    file_path: &str,
+    cve_id: &str,
+) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let secret = config
+        .gemini_api_key
+        .as_deref()
+        .or(config.supabase_service_key.as_deref())
+        .or(config.github_fallback_token.as_deref())
+        .unwrap_or("buzz-default-signing-secret");
+
+    let mut hasher = DefaultHasher::new();
+    "buzz-patch-v1".hash(&mut hasher);
+    secret.hash(&mut hasher);
+    repo.trim().hash(&mut hasher);
+    branch.trim().hash(&mut hasher);
+    file_path.trim().hash(&mut hasher);
+    cve_id.trim().hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+pub fn verify_patch_signature(config: &AppConfig, req: &PatchRequest) -> bool {
+    if req.patch_token.trim().is_empty() {
+        return false;
+    }
+    let expected =
+        compute_patch_signature(config, &req.repo, &req.branch, &req.file_path, &req.cve_id);
+    constant_time_eq(req.patch_token.trim().as_bytes(), expected.as_bytes())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[derive(Clone, Debug)]
@@ -1343,12 +1394,22 @@ pub async fn create_remediation_pull_request(
     req: &PatchRequest,
     github_token: Option<&str>,
 ) -> PullRequestOutcome {
-    // Prefer GITHUB_PAT (configured on Vercel for forking & PR creation) or user's OAuth token
-    let Some(token) = config
-        .github_fallback_token
-        .as_deref()
+    // Only allow using the server-side GITHUB_PAT when the request carries a valid
+    // server-issued patch_token signature from `/api/analyze` (prevents unauthenticated GITHUB_PAT abuse).
+    let server_pat_authorized = verify_patch_signature(config, req);
+
+    let Some(token) = github_token
         .filter(|t| !t.trim().is_empty())
-        .or_else(|| github_token.filter(|t| !t.trim().is_empty()))
+        .or_else(|| {
+            if server_pat_authorized {
+                config
+                    .github_fallback_token
+                    .as_deref()
+                    .filter(|t| !t.trim().is_empty())
+            } else {
+                None
+            }
+        })
     else {
         return PullRequestOutcome::NeedsAuth;
     };
@@ -1359,6 +1420,11 @@ pub async fn create_remediation_pull_request(
         .trim_end_matches(".git")
         .trim_start_matches("https://github.com/")
         .trim_matches('/');
+
+    // Validate owner/repo format and prevent path traversal
+    if clean_repo.contains("..") || clean_repo.split('/').count() != 2 {
+        return PullRequestOutcome::Error("Invalid target repository identifier.".to_string());
+    }
     let repo_name_only = clean_repo.split('/').nth(1).unwrap_or("repo");
 
     let base_branch = if req.branch.trim().is_empty() || req.branch == "HEAD" {
@@ -1366,7 +1432,12 @@ pub async fn create_remediation_pull_request(
     } else {
         req.branch.trim()
     };
-    let clean_file_path = req.file_path.trim().trim_start_matches('/');
+
+    // Normalize file_path in case Gemini returned backticks, multiple files, or `:L10` suffix
+    let clean_file_path = sanitize_repo_file_path(&req.file_path);
+    if clean_file_path.is_empty() || clean_file_path.contains("..") {
+        return PullRequestOutcome::Error("Invalid target file path.".to_string());
+    }
 
     // 0. Identify the authenticated GitHub user for the token (needed for fork namespace)
     let pat_user = fetch_authenticated_github_login(client, token).await;
@@ -1765,31 +1836,69 @@ async fn fetch_authenticated_github_login(client: &Client, token: &str) -> Optio
         .map(|s| s.to_string())
 }
 
+fn sanitize_repo_file_path(raw: &str) -> String {
+    let first_token = raw
+        .trim()
+        .trim_matches('`')
+        .split([' ', ',', ';', '('])
+        .next()
+        .unwrap_or("")
+        .trim_matches('`')
+        .trim_start_matches('/');
+    first_token
+        .split(':')
+        .next()
+        .unwrap_or(first_token)
+        .trim()
+        .to_string()
+}
+
 async fn synthesize_patched_file(
     client: &Client,
     config: &AppConfig,
     original_content: &str,
     req: &PatchRequest,
 ) -> String {
+    let lines: Vec<&str> = original_content.lines().collect();
+    let target_line: usize = req
+        .line_reference
+        .trim_start_matches('L')
+        .split(['-', ',', ':'])
+        .next()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1);
+
+    // Extract a surgical 40-line window around `target_line` so Gemini responds in ~1s without truncating large files
+    let win_start = target_line.saturating_sub(20);
+    let win_end = (target_line + 20).min(lines.len());
+    let window_slice = if win_start < win_end {
+        lines[win_start..win_end].join("\n")
+    } else {
+        original_content.chars().take(3000).collect()
+    };
+
     if let Some(api_key) = &config.gemini_api_key {
         let prompt = format!(
             "You are Buzz, an automated security patch generator powered by Gemini 4 Argon.\n\
-             Apply the following security fix to `{file_path}` (at `{line_ref}`) to remediate `{cve_id}` ({title}).\n\
-             Suggested patch:\n{patch}\n\n\
-             Return ONLY the complete updated file contents with no markdown code fences and no extra commentary.\n\n\
-             === ORIGINAL FILE ({file_path}) ===\n{orig}",
+             Update ONLY the code snippet below from `{file_path}` (lines {start}..{end}, issue at `{line_ref}`) \
+             to remediate `{cve_id}` ({title}).\n\
+             Suggested remediation:\n{patch}\n\n\
+             Return ONLY the replacement code for this exact snippet (lines {start}..{end}) with no markdown code fences and no extra commentary.\n\n\
+             === TARGET SNIPPET ({file_path} L{start}..L{end}) ===\n{snippet}",
             file_path = req.file_path,
+            start = win_start + 1,
+            end = win_end,
             line_ref = req.line_reference,
             cve_id = req.cve_id,
             title = req.title,
             patch = req.remediation_patch,
-            orig = original_content
+            snippet = window_slice
         );
 
         let candidate_models = [
             config.gemini_model.as_str(),
             "gemini-2.5-flash",
-            "gemini-2.5-pro",
             "gemini-2.0-flash",
         ];
 
@@ -1819,8 +1928,18 @@ async fn synthesize_patched_file(
                             .and_then(|v| v.as_str())
                         {
                             let cleaned = strip_markdown_fences(raw_text);
-                            if !cleaned.is_empty() && cleaned != original_content {
-                                return format!("{}\n", cleaned);
+                            if !cleaned.is_empty() && cleaned != window_slice && win_start < win_end {
+                                let mut updated_lines: Vec<String> = Vec::with_capacity(lines.len() + 10);
+                                for l in &lines[..win_start] {
+                                    updated_lines.push((*l).to_string());
+                                }
+                                for l in cleaned.lines() {
+                                    updated_lines.push(l.to_string());
+                                }
+                                for l in &lines[win_end..] {
+                                    updated_lines.push((*l).to_string());
+                                }
+                                return format!("{}\n", updated_lines.join("\n"));
                             }
                         }
                     }
@@ -1830,14 +1949,6 @@ async fn synthesize_patched_file(
     }
 
     // Deterministic fallback: insert the remediation patch at the target line
-    let target_line: usize = req
-        .line_reference
-        .trim_start_matches('L')
-        .split('-')
-        .next()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(1);
-
     let comment_prefix = if req.file_path.ends_with(".sql") {
         "--"
     } else if req.file_path.ends_with(".py")
@@ -1850,9 +1961,9 @@ async fn synthesize_patched_file(
         "//"
     };
 
-    let mut lines: Vec<String> = original_content.lines().map(|l| l.to_string()).collect();
-    let insert_idx = target_line.saturating_sub(1).min(lines.len());
-    lines.insert(
+    let mut owned_lines: Vec<String> = lines.into_iter().map(|l| l.to_string()).collect();
+    let insert_idx = target_line.saturating_sub(1).min(owned_lines.len());
+    owned_lines.insert(
         insert_idx,
         format!(
             "{} [Buzz Remediation {}]: {}",
@@ -1861,11 +1972,14 @@ async fn synthesize_patched_file(
             req.remediation_patch.replace('\n', " ")
         ),
     );
-    format!("{}\n", lines.join("\n"))
+    format!("{}\n", owned_lines.join("\n"))
 }
 
 pub mod templates {
-    use super::{AppConfig, AuditReport, CveRecord, GitHubRepoItem, PullRequestOutcome};
+    use super::{
+        compute_patch_signature, AppConfig, AuditReport, CveRecord, GitHubRepoItem,
+        PullRequestOutcome,
+    };
 
     pub fn render_pr_outcome(outcome: &PullRequestOutcome) -> String {
         match outcome {
@@ -2003,6 +2117,7 @@ pub mod templates {
     }
 
     pub fn render_audit_report(report: &AuditReport) -> String {
+        let signing_config = AppConfig::from_env();
         let mut findings_html = String::new();
 
         if report.findings.is_empty() {
@@ -2019,6 +2134,13 @@ pub mod templates {
         } else {
             for (idx, f) in report.findings.iter().enumerate() {
                 let sev = escape_html(&f.severity.to_uppercase());
+                let patch_token = compute_patch_signature(
+                    &signing_config,
+                    &report.repo_full_name,
+                    &report.default_branch,
+                    &f.file_path,
+                    &f.cve_id,
+                );
                 findings_html.push_str(&format!(
                     r##"<article class="finding-card sev-{sev}">
                         <div class="finding-top">
@@ -2059,6 +2181,7 @@ pub mod templates {
                                         <input type="hidden" name="file_path" value="{file_path}" />
                                         <input type="hidden" name="line_reference" value="{line_ref}" />
                                         <input type="hidden" name="remediation_patch" value="{patch}" />
+                                        <input type="hidden" name="patch_token" value="{patch_token}" />
                                         <button type="submit" class="pixel-btn pixel-btn-apply">
                                             ⚡ APPLY &amp; OPEN PR
                                         </button>
@@ -2081,7 +2204,8 @@ pub mod templates {
                     file_path = escape_html(&f.file_path),
                     line_ref = escape_html(&f.line_reference),
                     explanation = escape_html(&f.explanation),
-                    patch = escape_html(&f.remediation_patch)
+                    patch = escape_html(&f.remediation_patch),
+                    patch_token = escape_html(&patch_token)
                 ));
             }
         }

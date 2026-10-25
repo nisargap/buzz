@@ -60,5 +60,6 @@ fn parse_patch_request(body: &Body) -> PatchRequest {
             .remove("line_reference")
             .unwrap_or_else(|| "L1".to_string()),
         remediation_patch: map.remove("remediation_patch").unwrap_or_default(),
+        patch_token: map.remove("patch_token").unwrap_or_default(),
     }
 }

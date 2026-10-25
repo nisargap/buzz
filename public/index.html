@@ -293,11 +293,20 @@
           style="margin-top: 12px; padding: 18px; background: var(--terminal-bg); border: 2px dashed var(--border-blue); text-align: center;"
         >
           <div style="font-family: var(--font-display); font-size: 0.72rem; color: var(--buzz-yellow); margin-bottom: 8px;">
-            🔒 SIGN IN REQUIRED TO SCAN REPOSITORIES
+            🔒 SIGN IN TO START YOUR AUDIT
           </div>
           <div style="font-family: var(--font-code); font-size: 0.8rem; color: var(--text-muted);">
-            Use Sign in with GitHub in the top-right to select a repository, run 1M-context CVE audits, and open Pull Request patches.
+            Connect your GitHub account to choose a repository and start scanning.
           </div>
+          <button
+            id="repo-signin-btn"
+            type="button"
+            class="pixel-btn pixel-btn-primary pixel-btn-sm"
+            style="margin-top: 16px; max-width: 100%; min-height: 44px;"
+            onclick="window.buzzConnectGitHub()"
+          >
+            SIGN IN WITH GITHUB
+          </button>
         </div>
 
         <!-- Shown ONLY when signed in with GitHub -->

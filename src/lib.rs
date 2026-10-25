@@ -1406,20 +1406,20 @@ pub async fn create_remediation_pull_request(
 ) -> PullRequestOutcome {
     let server_pat_authorized = verify_patch_signature(config, req);
 
-    // Strictly require either a user-supplied OAuth token OR a valid server-signed patch_token
+    // Prioritize the user's connected GitHub OAuth/PAT token if provided, then server GITHUB_PAT
     let mut candidate_tokens: Vec<&str> = Vec::new();
+    if let Some(user_tok) = github_token.filter(|t| !t.trim().is_empty()) {
+        candidate_tokens.push(user_tok);
+    }
     if server_pat_authorized {
         if let Some(pat) = config
             .github_fallback_token
             .as_deref()
             .filter(|t| !t.trim().is_empty())
         {
-            candidate_tokens.push(pat);
-        }
-    }
-    if let Some(user_tok) = github_token.filter(|t| !t.trim().is_empty()) {
-        if !candidate_tokens.contains(&user_tok) {
-            candidate_tokens.push(user_tok);
+            if !candidate_tokens.contains(&pat) {
+                candidate_tokens.push(pat);
+            }
         }
     }
 

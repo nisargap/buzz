@@ -161,120 +161,183 @@
         </h2>
 
         <div class="bolt-gauge-wrap">
-          <!-- Empty Pixel Lightning Bolt Loader (Full Bolt = 1,000,000 Tokens) -->
-          <svg
-            class="bolt-gauge-svg"
-            viewBox="0 0 32 32"
-            role="img"
-            aria-label="1M Context Window Lightning Bolt Loader"
-          >
-            <defs>
-              <!-- Exact interior pixel mask of the Buzz Lightning Bolt (y=2..20) -->
-              <clipPath id="bolt-interior-clip">
-                <rect x="14" y="2" width="7" height="2" />
-                <rect x="13" y="4" width="7" height="2" />
-                <rect x="12" y="6" width="7" height="2" />
-                <rect x="11" y="8" width="8" height="1" />
-                <rect x="11" y="9" width="12" height="2" />
-                <rect x="10" y="11" width="12" height="1" />
-                <rect x="10" y="12" width="11" height="1" />
-                <rect x="14" y="13" width="6" height="1" />
-                <rect x="14" y="14" width="5" height="1" />
-                <rect x="14" y="15" width="4" height="1" />
-                <rect x="13" y="16" width="4" height="1" />
-                <rect x="13" y="17" width="3" height="1" />
-                <rect x="12" y="18" width="3" height="1" />
-                <rect x="12" y="19" width="2" height="1" />
-              </clipPath>
-            </defs>
+          <div class="bolt-stage-figure">
+            <!-- Empty Pixel Lightning Bolt Loader (Full Bolt = 1,000,000 Tokens) -->
+            <svg
+              class="bolt-gauge-svg"
+              viewBox="0 0 32 32"
+              role="img"
+              aria-label="1M Context Window Lightning Bolt Loader"
+            >
+              <defs>
+                <!-- Exact interior pixel mask of the Buzz Lightning Bolt (y=2..20) -->
+                <clipPath id="bolt-interior-clip">
+                  <rect x="14" y="2" width="7" height="2" />
+                  <rect x="13" y="4" width="7" height="2" />
+                  <rect x="12" y="6" width="7" height="2" />
+                  <rect x="11" y="8" width="8" height="1" />
+                  <rect x="11" y="9" width="12" height="2" />
+                  <rect x="10" y="11" width="12" height="1" />
+                  <rect x="10" y="12" width="11" height="1" />
+                  <rect x="14" y="13" width="6" height="1" />
+                  <rect x="14" y="14" width="5" height="1" />
+                  <rect x="14" y="15" width="4" height="1" />
+                  <rect x="13" y="16" width="4" height="1" />
+                  <rect x="13" y="17" width="3" height="1" />
+                  <rect x="12" y="18" width="3" height="1" />
+                  <rect x="12" y="19" width="2" height="1" />
+                </clipPath>
+              </defs>
 
-            <!-- 1. Empty Dark Interior Cavity of the Lightning Bolt -->
-            <g clip-path="url(#bolt-interior-clip)" shape-rendering="crispEdges">
-              <rect x="9" y="2" width="15" height="18" fill="#091024" />
-              <rect x="9" y="6" width="15" height="1" fill="#132247" />
-              <rect x="9" y="10" width="15" height="1" fill="#132247" />
-              <rect x="9" y="14" width="15" height="1" fill="#132247" />
-              <rect x="9" y="18" width="15" height="1" fill="#132247" />
+              <!-- 1. Empty Dark Interior Cavity of the Lightning Bolt -->
+              <g clip-path="url(#bolt-interior-clip)" shape-rendering="crispEdges">
+                <rect x="9" y="2" width="15" height="18" fill="#091024" />
+                <rect x="9" y="6" width="15" height="1" fill="#132247" />
+                <rect x="9" y="10" width="15" height="1" fill="#132247" />
+                <rect x="9" y="14" width="15" height="1" fill="#132247" />
+                <rect x="9" y="18" width="15" height="1" fill="#132247" />
 
-              <!-- 2. Dynamic 1M Context Fill Rect (proportional to real repo tokens / 1,000,000) -->
-              <rect
-                id="bolt-fill-body"
-                x="9"
-                y="20"
-                width="15"
-                height="0"
-                fill="#FFE047"
-              />
-              <rect
-                id="bolt-fill-crest"
-                x="9"
-                y="20"
-                width="15"
-                height="0"
-                fill="#FFF9C4"
-              />
-            </g>
+                <!-- 2. Dynamic 1M Context Fill Rect (proportional to real repo tokens / 1,000,000) -->
+                <rect
+                  id="bolt-fill-body"
+                  x="9"
+                  y="20"
+                  width="15"
+                  height="0"
+                  fill="#FFE047"
+                />
+                <rect
+                  id="bolt-fill-crest"
+                  x="9"
+                  y="20"
+                  width="15"
+                  height="0"
+                  fill="#FFF9C4"
+                />
+              </g>
 
-            <!-- 3. Crisp Pixel Outline of the Lightning Bolt -->
-            <g fill="#29488A" id="bolt-outline-group" shape-rendering="crispEdges">
-              <rect x="14" y="1" width="7" height="1" />
-              <rect x="13" y="2" width="1" height="2" />
-              <rect x="21" y="2" width="1" height="2" />
-              <rect x="12" y="4" width="1" height="2" />
-              <rect x="20" y="4" width="1" height="2" />
-              <rect x="11" y="6" width="1" height="2" />
-              <rect x="19" y="6" width="1" height="2" />
-              <rect x="10" y="8" width="1" height="3" />
-              <rect x="19" y="8" width="5" height="1" />
-              <rect x="23" y="9" width="1" height="2" />
-              <rect x="9" y="11" width="1" height="2" />
-              <rect x="22" y="11" width="1" height="1" />
-              <rect x="21" y="12" width="1" height="1" />
-              <rect x="10" y="13" width="4" height="1" />
-              <rect x="20" y="13" width="1" height="1" />
-              <rect x="13" y="14" width="1" height="2" />
-              <rect x="19" y="14" width="1" height="1" />
-              <rect x="18" y="15" width="1" height="1" />
-              <rect x="12" y="16" width="1" height="2" />
-              <rect x="17" y="16" width="1" height="1" />
-              <rect x="16" y="17" width="1" height="1" />
-              <rect x="11" y="18" width="1" height="2" />
-              <rect x="15" y="18" width="1" height="1" />
-              <rect x="14" y="19" width="1" height="1" />
-              <rect x="12" y="20" width="2" height="1" />
-            </g>
+              <!-- 3. Crisp Pixel Outline of the Lightning Bolt -->
+              <g fill="#29488A" id="bolt-outline-group" shape-rendering="crispEdges">
+                <rect x="14" y="1" width="7" height="1" />
+                <rect x="13" y="2" width="1" height="2" />
+                <rect x="21" y="2" width="1" height="2" />
+                <rect x="12" y="4" width="1" height="2" />
+                <rect x="20" y="4" width="1" height="2" />
+                <rect x="11" y="6" width="1" height="2" />
+                <rect x="19" y="6" width="1" height="2" />
+                <rect x="10" y="8" width="1" height="3" />
+                <rect x="19" y="8" width="5" height="1" />
+                <rect x="23" y="9" width="1" height="2" />
+                <rect x="9" y="11" width="1" height="2" />
+                <rect x="22" y="11" width="1" height="1" />
+                <rect x="21" y="12" width="1" height="1" />
+                <rect x="10" y="13" width="4" height="1" />
+                <rect x="20" y="13" width="1" height="1" />
+                <rect x="13" y="14" width="1" height="2" />
+                <rect x="19" y="14" width="1" height="1" />
+                <rect x="18" y="15" width="1" height="1" />
+                <rect x="12" y="16" width="1" height="2" />
+                <rect x="17" y="16" width="1" height="1" />
+                <rect x="16" y="17" width="1" height="1" />
+                <rect x="11" y="18" width="1" height="2" />
+                <rect x="15" y="18" width="1" height="1" />
+                <rect x="14" y="19" width="1" height="1" />
+                <rect x="12" y="20" width="2" height="1" />
+              </g>
 
-            <!-- 4. Two Dark Pixel Eyes on the Lightning Bolt -->
-            <g shape-rendering="crispEdges">
-              <rect x="13" y="8" width="2" height="3" fill="#050711" />
-              <rect x="13" y="8" width="1" height="1" fill="#FFFFFF" />
-              <rect x="17" y="8" width="2" height="3" fill="#050711" />
-              <rect x="17" y="8" width="1" height="1" fill="#FFFFFF" />
-            </g>
+              <!-- 4. Two Dark Pixel Eyes on the Lightning Bolt -->
+              <g shape-rendering="crispEdges">
+                <rect x="13" y="8" width="2" height="3" fill="#050711" />
+                <rect x="13" y="8" width="1" height="1" fill="#FFFFFF" />
+                <rect x="17" y="8" width="2" height="3" fill="#050711" />
+                <rect x="17" y="8" width="1" height="1" fill="#FFFFFF" />
+              </g>
 
-            <!-- 5. Floating Pixel Cloud Underneath -->
-            <g id="loader-cloud" shape-rendering="crispEdges">
-              <rect x="10" y="21" width="5" height="1" fill="#141020" />
-              <rect x="18" y="21" width="4" height="1" fill="#141020" />
-              <rect x="7" y="22" width="3" height="1" fill="#141020" />
-              <rect x="15" y="22" width="3" height="1" fill="#141020" />
-              <rect x="22" y="22" width="3" height="1" fill="#141020" />
-              <rect x="5" y="23" width="2" height="1" fill="#141020" />
-              <rect x="25" y="23" width="2" height="1" fill="#141020" />
-              <rect x="4" y="24" width="1" height="4" fill="#141020" />
-              <rect x="27" y="24" width="1" height="4" fill="#141020" />
-              <rect x="5" y="28" width="2" height="1" fill="#141020" />
-              <rect x="25" y="28" width="2" height="1" fill="#141020" />
-              <rect x="7" y="29" width="18" height="1" fill="#141020" />
-              <rect x="10" y="22" width="5" height="2" fill="#FFFFFF" />
-              <rect x="18" y="22" width="4" height="2" fill="#FFFFFF" />
-              <rect x="7" y="23" width="18" height="3" fill="#FFFFFF" />
-              <rect x="5" y="24" width="22" height="2" fill="#FFFFFF" />
-              <rect x="5" y="26" width="22" height="1" fill="#D9E6FF" />
-              <rect x="5" y="27" width="22" height="1" fill="#B5CCF7" />
-              <rect x="7" y="28" width="18" height="1" fill="#8FAEEB" />
-            </g>
-          </svg>
+              <!-- 5. Floating Pixel Cloud Underneath -->
+              <g id="loader-cloud" shape-rendering="crispEdges">
+                <rect x="10" y="21" width="5" height="1" fill="#141020" />
+                <rect x="18" y="21" width="4" height="1" fill="#141020" />
+                <rect x="7" y="22" width="3" height="1" fill="#141020" />
+                <rect x="15" y="22" width="3" height="1" fill="#141020" />
+                <rect x="22" y="22" width="3" height="1" fill="#141020" />
+                <rect x="5" y="23" width="2" height="1" fill="#141020" />
+                <rect x="25" y="23" width="2" height="1" fill="#141020" />
+                <rect x="4" y="24" width="1" height="4" fill="#141020" />
+                <rect x="27" y="24" width="1" height="4" fill="#141020" />
+                <rect x="5" y="28" width="2" height="1" fill="#141020" />
+                <rect x="25" y="28" width="2" height="1" fill="#141020" />
+                <rect x="7" y="29" width="18" height="1" fill="#141020" />
+                <rect x="10" y="22" width="5" height="2" fill="#FFFFFF" />
+                <rect x="18" y="22" width="4" height="2" fill="#FFFFFF" />
+                <rect x="7" y="23" width="18" height="3" fill="#FFFFFF" />
+                <rect x="5" y="24" width="22" height="2" fill="#FFFFFF" />
+                <rect x="5" y="26" width="22" height="1" fill="#D9E6FF" />
+                <rect x="5" y="27" width="22" height="1" fill="#B5CCF7" />
+                <rect x="7" y="28" width="18" height="1" fill="#8FAEEB" />
+              </g>
+            </svg>
+
+            <!-- Animated Pixelated Magnifying Glass (Sweeps while cross-referencing CVEs) -->
+            <svg
+              id="pixel-magnifier-overlay"
+              class="pixel-magnifier-overlay"
+              viewBox="0 0 24 24"
+              shape-rendering="crispEdges"
+              aria-hidden="true"
+            >
+              <!-- Outer Dark Pixel Border of Lens -->
+              <rect x="6" y="2" width="8" height="1" fill="#050711" />
+              <rect x="4" y="3" width="2" height="1" fill="#050711" />
+              <rect x="14" y="3" width="2" height="1" fill="#050711" />
+              <rect x="3" y="4" width="1" height="2" fill="#050711" />
+              <rect x="16" y="4" width="1" height="2" fill="#050711" />
+              <rect x="2" y="6" width="1" height="8" fill="#050711" />
+              <rect x="17" y="6" width="1" height="8" fill="#050711" />
+              <rect x="3" y="14" width="1" height="2" fill="#050711" />
+              <rect x="16" y="14" width="1" height="2" fill="#050711" />
+              <rect x="4" y="16" width="2" height="1" fill="#050711" />
+              <rect x="14" y="16" width="2" height="1" fill="#050711" />
+              <rect x="6" y="17" width="8" height="1" fill="#050711" />
+
+              <!-- Cyan/Gold Pixel Lens Rim -->
+              <rect x="6" y="3" width="8" height="1" fill="#48D1FF" />
+              <rect x="4" y="4" width="2" height="1" fill="#48D1FF" />
+              <rect x="14" y="4" width="2" height="1" fill="#48D1FF" />
+              <rect x="3" y="6" width="1" height="8" fill="#48D1FF" />
+              <rect x="16" y="6" width="1" height="8" fill="#48D1FF" />
+              <rect x="4" y="15" width="2" height="1" fill="#48D1FF" />
+              <rect x="14" y="15" width="2" height="1" fill="#48D1FF" />
+              <rect x="6" y="16" width="8" height="1" fill="#48D1FF" />
+
+              <!-- Translucent Cyan Glass Lens Fill -->
+              <rect x="6" y="4" width="8" height="12" fill="rgba(72, 209, 255, 0.24)" />
+              <rect x="4" y="6" width="12" height="8" fill="rgba(72, 209, 255, 0.24)" />
+              <rect x="5" y="5" width="10" height="10" fill="rgba(72, 209, 255, 0.18)" />
+
+              <!-- Crisp White Pixel Lens Glint -->
+              <rect x="6" y="5" width="3" height="1" fill="#FFFFFF" />
+              <rect x="5" y="6" width="1" height="3" fill="#FFFFFF" />
+              <rect x="7" y="7" width="1" height="1" fill="#FFF9C4" />
+
+              <!-- Diagonal Pixel Handle (Bottom-Right) -->
+              <rect x="15" y="15" width="2" height="2" fill="#FFE047" />
+              <rect x="16" y="16" width="2" height="2" fill="#FFA800" />
+              <rect x="17" y="17" width="2" height="2" fill="#FFE047" />
+              <rect x="18" y="18" width="2" height="2" fill="#FFA800" />
+              <rect x="19" y="19" width="3" height="3" fill="#FFE047" />
+              <!-- Handle Dark Outline -->
+              <rect x="17" y="15" width="1" height="1" fill="#050711" />
+              <rect x="18" y="16" width="1" height="1" fill="#050711" />
+              <rect x="19" y="17" width="1" height="1" fill="#050711" />
+              <rect x="20" y="18" width="1" height="1" fill="#050711" />
+              <rect x="22" y="19" width="1" height="3" fill="#050711" />
+              <rect x="19" y="22" width="3" height="1" fill="#050711" />
+              <rect x="15" y="17" width="1" height="1" fill="#050711" />
+              <rect x="16" y="18" width="1" height="1" fill="#050711" />
+              <rect x="17" y="19" width="1" height="1" fill="#050711" />
+              <rect x="18" y="20" width="1" height="2" fill="#050711" />
+            </svg>
+          </div>
 
           <!-- 1M Context Capacity Tick Marks -->
           <div class="bolt-scale-ticks">
@@ -292,6 +355,41 @@
 
         <div id="context-stream-file" class="context-sub-readout">
           Querying GitHub repository tree for exact file byte sizes...
+        </div>
+
+        <!-- Pixelated Magnifying Glass CVE Cross-Referencing Strip -->
+        <div id="cve-crossref-box" class="cve-crossref-box">
+          <svg
+            class="cve-mini-magnifier"
+            viewBox="0 0 24 24"
+            shape-rendering="crispEdges"
+            aria-hidden="true"
+          >
+            <rect x="6" y="2" width="8" height="1" fill="#050711" />
+            <rect x="4" y="3" width="2" height="1" fill="#050711" />
+            <rect x="14" y="3" width="2" height="1" fill="#050711" />
+            <rect x="2" y="6" width="1" height="8" fill="#050711" />
+            <rect x="17" y="6" width="1" height="8" fill="#050711" />
+            <rect x="6" y="17" width="8" height="1" fill="#050711" />
+            <rect x="6" y="3" width="8" height="1" fill="#48D1FF" />
+            <rect x="3" y="6" width="1" height="8" fill="#48D1FF" />
+            <rect x="16" y="6" width="1" height="8" fill="#48D1FF" />
+            <rect x="6" y="16" width="8" height="1" fill="#48D1FF" />
+            <rect x="5" y="5" width="10" height="10" fill="rgba(72, 209, 255, 0.28)" />
+            <rect x="6" y="5" width="3" height="1" fill="#FFFFFF" />
+            <rect x="5" y="6" width="1" height="3" fill="#FFFFFF" />
+            <rect x="15" y="15" width="2" height="2" fill="#FFE047" />
+            <rect x="17" y="17" width="2" height="2" fill="#FFA800" />
+            <rect x="19" y="19" width="3" height="3" fill="#FFE047" />
+          </svg>
+          <div style="flex: 1; min-width: 0;">
+            <div class="cve-crossref-title">
+              🔍 CROSS-REFERENCING REPO AGAINST 1,220 CVELIST V5 SIGNATURES
+            </div>
+            <div id="cve-crossref-ticker" class="cve-crossref-ticker">
+              Inspecting dependency manifests &amp; AST call sites...
+            </div>
+          </div>
         </div>
 
         <!-- Real-Time File & Token Ingestion Log -->
@@ -447,9 +545,35 @@
 
       // 4. Accurate 1M Context Lightning Bolt Gauge & Real Token Ingestion Controller
       let ingestionTimer = null;
+      let cveScanTimer = null;
       const MAX_CONTEXT_TOKENS = 1000000;
       const MAX_SINGLE_FILE_BYTES = 180000;
       const MAX_FILES_TO_FETCH = 250;
+
+      const SAMPLE_CVE_CHECKS = [
+        'CVE-2024-32650 [cargo::rustls < 0.23.5]',
+        'CVE-2024-24576 [cargo::std::process::Command]',
+        'CVE-2023-4863 [cargo::libwebp-sys < 0.9.3]',
+        'CVE-2024-45296 [npm::path-to-regexp ReDoS]',
+        'CVE-2024-39338 [npm::axios SSRF]',
+        'CVE-2024-29041 [npm::express res.redirect]',
+        'CVE-2024-35195 [pip::requests Session verify]',
+        'CVE-2024-37891 [pip::urllib3 Proxy-Authorization]',
+        'CVE-2024-24790 [go::net/netip IsPrivate]',
+        'CVE-2026-116067 [npm::paisa CWE-22]',
+        'CVE-2024-8986 [CWE-89 SQL Interpolation]'
+      ];
+
+      function stopAllAnalysisTimers() {
+        if (ingestionTimer) {
+          clearInterval(ingestionTimer);
+          ingestionTimer = null;
+        }
+        if (cveScanTimer) {
+          clearInterval(cveScanTimer);
+          cveScanTimer = null;
+        }
+      }
 
       function setBoltFill(tokens, isCompacting) {
         const fraction = Math.max(0, Math.min(1, tokens / MAX_CONTEXT_TOKENS));
@@ -515,10 +639,7 @@
       }
 
       window.buzzStartAnalysisPage = async function () {
-        if (ingestionTimer) {
-          clearInterval(ingestionTimer);
-          ingestionTimer = null;
-        }
+        stopAllAnalysisTimers();
 
         const repoInput = document.getElementById('repo-input');
         const rawRepo = (repoInput ? repoInput.value : 'nisargap/buzz').trim();
@@ -537,12 +658,17 @@
         const logEl = document.getElementById('file-ingestion-log');
         const pillEl = document.getElementById('compact-pill');
         const cardEl = document.getElementById('bolt-loader-card');
+        const magOverlay = document.getElementById('pixel-magnifier-overlay');
+        const cveBox = document.getElementById('cve-crossref-box');
+        const cveTicker = document.getElementById('cve-crossref-ticker');
 
         if (headingEl) headingEl.textContent = 'AUDITING ' + cleanRepo.toUpperCase();
         if (counterEl) counterEl.textContent = '0 / 1,000,000 TOKENS (0.0%)';
         if (streamEl) streamEl.textContent = 'Fetching Git tree metadata from GitHub...';
         if (logEl) logEl.innerHTML = '';
         if (cardEl) cardEl.classList.remove('compacting');
+        if (magOverlay) magOverlay.classList.remove('active');
+        if (cveBox) cveBox.classList.remove('active');
         if (pillEl) {
           pillEl.className = 'compact-status-pill';
           pillEl.textContent = '⚡ AUTO-COMPACT THRESHOLD: 1,000,000 TOKENS';
@@ -607,7 +733,6 @@
             if (currentTokens >= MAX_CONTEXT_TOKENS) {
               autoCompacted = true;
               const beforeCompact = currentTokens;
-              // Match src/lib.rs compact_source_for_1m_context (~52% comment/whitespace reduction)
               currentTokens = Math.round(currentTokens * 0.48);
               const saved = beforeCompact - currentTokens;
 
@@ -648,7 +773,8 @@
               '+' + f.tokens.toLocaleString() + ' tokens'
             );
           } else {
-            // All repository files have been ingested: lock the gauge at the true token count!
+            // All repository files have been ingested: lock the gauge at the true token count
+            // and launch the Pixelated Magnifying Glass CVE Cross-Referencing animation!
             clearInterval(ingestionTimer);
             ingestionTimer = null;
 
@@ -666,7 +792,7 @@
                 auditableFiles.length +
                 ' FILES LOADED (' +
                 currentTokens.toLocaleString() +
-                ' TOKENS) — GEMINI 4 ARGON CORRELATING CVEs...';
+                ' TOKENS) — GEMINI 4 ARGON CROSS-REFERENCING CVEs...';
             }
             if (!autoCompacted && pillEl) {
               pillEl.textContent =
@@ -674,25 +800,32 @@
                 pct +
                 '% USED — NO AUTO-COMPACT NEEDED)';
             }
+
+            // Activate the Pixelated Magnifying Glass overlay & CVE Cross-Reference Scanner
+            if (magOverlay) magOverlay.classList.add('active');
+            if (cveBox) cveBox.classList.add('active');
+
+            let cveTickIdx = 0;
+            cveScanTimer = setInterval(function () {
+              if (!cveTicker) return;
+              const cveSig = SAMPLE_CVE_CHECKS[cveTickIdx % SAMPLE_CVE_CHECKS.length];
+              const targetFile = auditableFiles[cveTickIdx % auditableFiles.length].path;
+              cveTickIdx += 1;
+              cveTicker.textContent = 'MATCHING ' + cveSig + ' ↔ ' + targetFile;
+            }, 220);
           }
-        }, 90);
+        }, 70);
       };
 
       window.buzzFinishAnalysisPage = function (event) {
-        if (ingestionTimer) {
-          clearInterval(ingestionTimer);
-          ingestionTimer = null;
-        }
+        stopAllAnalysisTimers();
         if (event && event.detail && event.detail.successful) {
           window.buzzGoToStep(4);
         }
       };
 
       window.buzzCancelAnalysis = function () {
-        if (ingestionTimer) {
-          clearInterval(ingestionTimer);
-          ingestionTimer = null;
-        }
+        stopAllAnalysisTimers();
         window.buzzGoToStep(2);
       };
 

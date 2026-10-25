@@ -1318,6 +1318,693 @@ body::before {
 }
 
 /* ==========================================================================
+   AUTO-REFACTOR: GUIDED CHOICES & EXPLICIT DRAFT PR REVIEW
+   ========================================================================== */
+
+.refactor-entry {
+  width: 100%;
+  margin-top: 18px;
+  border-color: var(--buzz-cyan);
+  color: var(--buzz-cyan);
+}
+
+.refactor-entry-note {
+  margin-top: 10px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+#wizard-step-5 {
+  max-width: 1120px;
+  gap: 16px;
+}
+
+#wizard-step-5 [hidden] {
+  display: none !important;
+}
+
+#wizard-step-5 .wizard-top-nav {
+  margin-bottom: 0;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+
+.refactor-panel,
+.refactor-stage {
+  min-width: 0;
+  width: 100%;
+}
+
+.refactor-header {
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+  border-bottom: 2px solid var(--border-blue);
+}
+
+.refactor-heading {
+  font-family: var(--font-display);
+  font-size: 0.76rem;
+  line-height: 1.6;
+  color: var(--buzz-yellow);
+}
+
+.refactor-repo-row {
+  min-width: 0;
+  flex: 1 1 240px;
+  text-align: right;
+}
+
+.refactor-repo-caption {
+  display: block;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.refactor-repo-label {
+  display: block;
+  font-family: var(--font-code);
+  font-size: 0.82rem;
+  color: var(--buzz-cyan);
+  overflow-wrap: anywhere;
+}
+
+.refactor-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+  list-style: none;
+}
+
+.refactor-progress li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 3px solid var(--border-blue);
+  background: var(--terminal-bg);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.refactor-progress li span {
+  font-family: var(--font-code);
+  font-size: 0.72rem;
+}
+
+.refactor-progress .is-current {
+  color: var(--buzz-yellow);
+  border-color: var(--buzz-yellow);
+  background: rgba(255, 224, 71, 0.08);
+}
+
+.refactor-progress .is-complete {
+  color: var(--buzz-green);
+  border-color: var(--buzz-green);
+}
+
+.refactor-stage-title {
+  font-family: var(--font-display);
+  font-size: 0.98rem;
+  line-height: 1.8;
+  color: var(--text-main);
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+
+.refactor-stage-copy,
+.refactor-help,
+.refactor-status,
+.refactor-summary,
+.refactor-published {
+  font-family: var(--font-code);
+  font-size: 0.8rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.refactor-stage-copy {
+  max-width: 76ch;
+  margin-bottom: 22px;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.refactor-help {
+  color: var(--text-muted);
+  margin: 7px 0 12px;
+}
+
+.refactor-base {
+  font-size: 0.72rem;
+}
+
+.refactor-status {
+  color: var(--buzz-cyan);
+  margin-top: 12px;
+}
+
+.refactor-status:empty {
+  margin-top: 0;
+}
+
+.refactor-auth {
+  margin-top: 14px;
+  padding: 16px;
+  border: 2px solid var(--buzz-yellow);
+  background: var(--terminal-bg);
+}
+
+.refactor-auth .refactor-help:last-child {
+  margin-bottom: 0;
+}
+
+.refactor-status.is-error,
+.refactor-count.is-error {
+  color: var(--sev-critical);
+}
+
+.refactor-goals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 4px 0 28px;
+}
+
+.refactor-goal-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 20px 18px;
+  border: 3px solid var(--border-blue);
+  background: var(--panel-alt);
+  box-shadow: 4px 4px 0 var(--border-dark);
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.1s steps(2, end), border-color 0.1s;
+}
+
+.refactor-goal-card::after {
+  content: "";
+  position: absolute;
+  top: 20px;
+  right: 14px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--text-muted);
+}
+
+.refactor-goal-card:hover:not(:disabled) {
+  transform: translateY(-3px);
+  border-color: var(--buzz-cyan);
+}
+
+.refactor-goal-card:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--border-dark);
+}
+
+.refactor-goal-card[aria-pressed="true"] {
+  border-color: var(--buzz-yellow);
+  background: linear-gradient(135deg, rgba(255, 224, 71, 0.1), var(--panel-alt));
+}
+
+.refactor-goal-card[aria-pressed="true"]::after {
+  border-color: var(--buzz-yellow);
+  background: var(--buzz-yellow);
+  box-shadow: inset 0 0 0 2px var(--panel-alt);
+}
+
+.refactor-goal-title {
+  padding-right: 14px;
+  font-family: var(--font-pixel-ui);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.refactor-goal-description {
+  font-family: var(--font-code);
+  font-size: 0.78rem;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.refactor-goal-badge {
+  margin-top: auto;
+  padding: 3px 6px;
+  color: var(--buzz-yellow);
+  background: var(--terminal-bg);
+  font-family: var(--font-pixel-ui);
+  font-size: 0.68rem;
+}
+
+.refactor-actions,
+.refactor-tweak-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.refactor-actions {
+  margin-top: 24px;
+}
+
+#wizard-step-5 .pixel-btn {
+  max-width: 100%;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+#wizard-step-5 .pixel-btn-primary {
+  padding: 16px 22px;
+  font-size: 0.76rem;
+}
+
+.refactor-tweak-actions {
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.refactor-scope-preview {
+  padding: 16px;
+  border: 2px solid var(--border-blue);
+  background: var(--terminal-bg);
+}
+
+.refactor-goal-summary {
+  font-family: var(--font-pixel-ui);
+  font-size: 0.88rem;
+  color: var(--buzz-yellow);
+  margin-bottom: 12px;
+}
+
+.refactor-suggested-files,
+.refactor-publish-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  list-style: none;
+}
+
+.refactor-suggested-files > *,
+.refactor-file-chip,
+.refactor-publish-files > li {
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-blue);
+  background: var(--panel-alt);
+  color: var(--buzz-cyan);
+  font-family: var(--font-code);
+  font-size: 0.78rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.refactor-scope-preview .refactor-help:last-child {
+  margin-bottom: 0;
+}
+
+.refactor-advanced {
+  margin-top: 20px;
+  border: 2px solid var(--border-blue);
+  background: rgba(5, 8, 19, 0.5);
+}
+
+.refactor-advanced > summary {
+  padding: 12px 14px;
+  color: var(--buzz-cyan);
+  font-family: var(--font-pixel-ui);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.refactor-advanced > summary:hover {
+  background: var(--panel-alt);
+  color: var(--buzz-yellow);
+}
+
+.refactor-advanced > summary::marker {
+  color: var(--buzz-yellow);
+}
+
+.refactor-advanced[open] > summary {
+  border-bottom: 1px solid var(--border-blue);
+}
+
+.refactor-settings,
+.refactor-feedback-body {
+  min-width: 0;
+  border: 0;
+  padding: 18px;
+}
+
+.refactor-label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  margin-bottom: 7px;
+}
+
+.refactor-textarea {
+  display: block;
+  min-height: 100px;
+  resize: vertical;
+  line-height: 1.6;
+  font-size: 0.84rem;
+  margin-bottom: 18px;
+}
+
+.refactor-scope,
+.refactor-file-selectors,
+.refactor-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.refactor-scope .pixel-input {
+  max-width: 180px;
+}
+
+.refactor-file-selectors:last-child {
+  margin-bottom: 0;
+}
+
+.refactor-file-group {
+  min-width: 0;
+  border: 2px solid var(--border-blue);
+  padding: 12px;
+}
+
+.refactor-file-group legend {
+  max-width: 100%;
+  padding: 0 6px;
+  color: var(--buzz-cyan);
+  font-size: 0.76rem;
+}
+
+.refactor-file-list {
+  max-height: 250px;
+  overflow: auto;
+  background: var(--terminal-bg);
+}
+
+.refactor-file-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-blue);
+  font-family: var(--font-code);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.refactor-file-choice:hover {
+  background: var(--panel-alt);
+}
+
+.refactor-file-choice span {
+  min-width: 0;
+}
+
+.refactor-file-size {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.refactor-sharing-note {
+  margin: 20px 0 0;
+  max-width: 94ch;
+}
+
+#wizard-step-5 input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  accent-color: var(--buzz-yellow);
+}
+
+#wizard-step-5 :is(button, input, textarea):disabled,
+.refactor-entry:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+#wizard-step-5 .pixel-btn:disabled {
+  transform: none;
+}
+
+#wizard-step-5 :is(button, a, input, textarea, summary, pre, [tabindex="-1"]):focus-visible,
+.refactor-entry:focus-visible {
+  outline: 3px solid var(--buzz-cyan);
+  outline-offset: 3px;
+}
+
+.refactor-warning {
+  padding: 12px 14px;
+  margin: 16px 0;
+  background: var(--terminal-bg);
+  border-left: 4px solid var(--buzz-amber);
+  color: var(--buzz-yellow);
+  font-family: var(--font-code);
+  font-size: 0.8rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.refactor-summary dt {
+  color: var(--buzz-cyan);
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-top: 12px;
+}
+
+.refactor-summary dd {
+  white-space: pre-wrap;
+}
+
+.refactor-count {
+  color: var(--buzz-yellow);
+  font-family: var(--font-code);
+  font-size: 0.8rem;
+  margin: 16px 0;
+}
+
+.refactor-edit-card {
+  min-width: 0;
+  margin: 20px 0;
+  padding-top: 16px;
+  border-top: 2px solid var(--border-blue);
+}
+
+.refactor-file-title {
+  color: var(--buzz-cyan);
+  font-family: var(--font-code);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+  margin-bottom: 12px;
+}
+
+.refactor-diff > div {
+  min-width: 0;
+}
+
+.refactor-code {
+  display: block;
+  width: 100%;
+  height: 320px;
+  overflow: auto;
+  white-space: pre;
+  tab-size: 2;
+  background: var(--terminal-bg);
+  color: var(--text-main);
+  border: 2px solid var(--border-blue);
+  padding: 12px;
+  font-family: var(--font-code);
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+
+textarea.refactor-code {
+  resize: vertical;
+  border-color: var(--buzz-cyan);
+}
+
+.refactor-edit-btn {
+  margin-top: 10px;
+  font-size: 0.62rem;
+}
+
+.refactor-published {
+  border-left: 4px solid var(--buzz-green);
+  background: var(--terminal-bg);
+  padding: 12px 16px;
+  margin: 18px 0;
+}
+
+.refactor-published a {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--buzz-cyan);
+  overflow-wrap: anywhere;
+  text-underline-offset: 3px;
+}
+
+.refactor-working {
+  padding: 18px 0;
+  text-align: center;
+}
+
+.refactor-working .refactor-stage-copy {
+  margin: 0 auto 14px;
+}
+
+.refactor-working .refactor-actions {
+  justify-content: center;
+}
+
+.refactor-loader {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 8px 0 28px;
+}
+
+.refactor-loader span {
+  width: 12px;
+  height: 12px;
+  background: var(--buzz-yellow);
+  box-shadow: 3px 3px 0 var(--border-dark);
+  animation: refactor-pixel-pulse 1.2s steps(3, end) infinite;
+}
+
+.refactor-loader span:nth-child(2) { animation-delay: 0.15s; }
+.refactor-loader span:nth-child(3) { animation-delay: 0.3s; }
+.refactor-loader span:nth-child(4) { animation-delay: 0.45s; }
+
+@keyframes refactor-pixel-pulse {
+  0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-4px); }
+}
+
+@media (max-width: 700px) {
+  #wizard-step-5 .pixel-box-gold {
+    padding: 20px 16px;
+  }
+
+  .refactor-header {
+    margin-bottom: 20px;
+  }
+
+  .refactor-progress {
+    gap: 5px;
+  }
+
+  .refactor-progress li {
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    font-size: 0.72rem;
+  }
+
+  .refactor-stage-title {
+    font-size: 0.86rem;
+  }
+
+  .refactor-goals,
+  .refactor-file-selectors,
+  .refactor-diff {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .refactor-goals {
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .refactor-goal-card {
+    gap: 6px;
+    padding: 16px;
+  }
+
+  .refactor-goal-badge {
+    margin-top: 4px;
+  }
+
+  #wizard-step-5 .pixel-btn {
+    font-size: 0.65rem;
+    padding: 12px;
+  }
+
+  .refactor-actions > .pixel-btn-primary {
+    width: 100%;
+  }
+
+  .refactor-settings,
+  .refactor-feedback-body,
+  .refactor-scope-preview {
+    padding: 12px;
+  }
+
+  .refactor-code {
+    height: 250px;
+  }
+}
+
+@media (max-width: 480px) {
+  .refactor-repo-row {
+    flex-basis: 100%;
+    text-align: left;
+  }
+
+  .refactor-scope {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .refactor-suggested-files > *,
+  .refactor-publish-files > li {
+    width: 100%;
+  }
+
+  .refactor-progress li {
+    padding: 8px 5px;
+    font-size: 0.66rem;
+  }
+
+  .refactor-tweak-actions > .pixel-btn {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #wizard-step-5,
+  .refactor-loader span {
+    animation: none;
+  }
+
+  .refactor-goal-card {
+    transition: none;
+  }
+
+  .refactor-goal-card:hover:not(:disabled),
+  .refactor-goal-card:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* ==========================================================================
    PIXEL CHECKBOX FOR DIAGRAM SELECTION
    ========================================================================== */
 

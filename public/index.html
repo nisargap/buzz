@@ -10,6 +10,7 @@
   <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
   <!-- Supabase JS Client for GitHub OAuth -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug" crossorigin="anonymous"></script>
+  <script src="/assets/refactor.js" defer></script>
 </head>
 <body>
   <!-- Pixelated Rain Animation Canvas over the Dark-to-Dark-Blue Gradient Fade -->
@@ -406,6 +407,18 @@
               ⚡ ANALYZE REPO IN 1M CONTEXT
             </button>
           </form>
+
+          <button
+            id="refactor-open-btn"
+            type="button"
+            class="pixel-btn refactor-entry"
+            onclick="window.buzzOpenRefactor()"
+          >
+            AUTO-REFACTOR
+          </button>
+          <p class="refactor-entry-note">
+            Use this repository and your existing GitHub connection to review a small refactor before opening a draft PR.
+          </p>
 
           <!-- Persisted Repository Audits (Strictly shown ONLY when signed in) -->
           <div id="saved-audits-panel" class="saved-audits-panel">
@@ -875,6 +888,179 @@
     </section>
 
     <!-- ================================================================== -->
+    <!-- WIZARD PAGE 5: GUIDED AUTO-REFACTOR                                -->
+    <!-- ================================================================== -->
+    <section id="wizard-step-5" class="wizard-step wizard-step-wide" aria-labelledby="refactor-heading">
+      <div class="wizard-top-nav">
+        <button id="refactor-back-btn" type="button" class="pixel-btn pixel-btn-sm">BACK TO REPOS</button>
+        <div class="refactor-repo-row">
+          <span class="refactor-repo-caption">CURRENT REPOSITORY</span>
+          <strong id="refactor-repo" class="refactor-repo-label"></strong>
+        </div>
+      </div>
+
+      <div class="pixel-box-gold refactor-panel">
+        <header class="refactor-header">
+          <h2 id="refactor-heading" class="refactor-heading" tabindex="-1">Auto-Refactor</h2>
+          <ol class="refactor-progress" aria-label="Refactor progress">
+            <li id="refactor-progress-goal" class="is-current" aria-current="step"><span>01</span> Goal</li>
+            <li id="refactor-progress-scope"><span>02</span> Scope</li>
+            <li id="refactor-progress-review"><span>03</span> Review</li>
+            <li id="refactor-progress-publish"><span>04</span> Draft</li>
+          </ol>
+          <p id="refactor-status" class="refactor-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <div id="refactor-auth" class="refactor-auth" hidden>
+            <p class="refactor-help">Browsing public repositories does not connect your GitHub account. Authorize repository access to load files and review a refactor.</p>
+            <button id="refactor-connect-btn" type="button" class="pixel-btn pixel-btn-primary">CONNECT GITHUB TO CONTINUE</button>
+            <p class="refactor-help">You’ll return to this repository and goal. Nothing is generated, committed, or published by signing in.</p>
+          </div>
+          <button id="refactor-load-btn" type="button" class="pixel-btn pixel-btn-sm" hidden>TRY LOADING AGAIN</button>
+        </header>
+
+        <section id="refactor-goal-stage" class="refactor-stage" aria-labelledby="refactor-goal-heading">
+          <h3 id="refactor-goal-heading" class="refactor-stage-title" tabindex="-1">What should we simplify?</h3>
+          <p class="refactor-stage-copy">Choose a direction. Buzz will pick a starting point. No writing needed.</p>
+          <div class="refactor-goals" role="group" aria-labelledby="refactor-goal-heading">
+            <button id="refactor-goal-cleanup" type="button" class="refactor-goal-card" aria-pressed="true">
+              <span class="refactor-goal-title">Balanced cleanup</span>
+              <span class="refactor-goal-description">A little less repetition and nesting. Keep the same behavior.</span>
+              <span class="refactor-goal-badge">Recommended</span>
+            </button>
+            <button id="refactor-goal-boilerplate" type="button" class="refactor-goal-card" aria-pressed="false">
+              <span class="refactor-goal-title">Less boilerplate</span>
+              <span class="refactor-goal-description">Trim repeated setup and busywork without adding complexity.</span>
+            </button>
+            <button id="refactor-goal-nesting" type="button" class="refactor-goal-card" aria-pressed="false">
+              <span class="refactor-goal-title">Flatter logic</span>
+              <span class="refactor-goal-description">Untangle nested conditions so the flow is easier to follow.</span>
+            </button>
+          </div>
+          <div class="refactor-actions">
+            <button id="refactor-goal-next-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>CONTINUE</button>
+          </div>
+        </section>
+
+        <section id="refactor-scope-stage" class="refactor-stage" aria-labelledby="refactor-scope-heading" hidden>
+          <h3 id="refactor-scope-heading" class="refactor-stage-title" tabindex="-1">Start small. Keep behavior.</h3>
+          <p class="refactor-stage-copy">Buzz picked a manageable starting point. Nothing changes until you review it.</p>
+          <div class="refactor-scope-preview">
+            <p id="refactor-goal-summary" class="refactor-goal-summary"></p>
+            <ul id="refactor-suggested-files" class="refactor-suggested-files"></ul>
+            <p id="refactor-scope-summary" class="refactor-help">Read-only context: none.</p>
+            <p id="refactor-base" class="refactor-help refactor-base"></p>
+          </div>
+          <p class="refactor-help">Suggested from file size and location, not evidence of complexity.</p>
+          <div id="refactor-revision-note" hidden>
+            <span class="refactor-label">FEEDBACK FOR THIS REVISION</span>
+            <p id="refactor-revision-feedback" class="refactor-help"></p>
+            <button id="refactor-clear-feedback-btn" type="button" class="pixel-btn pixel-btn-sm">REMOVE FEEDBACK</button>
+          </div>
+
+          <details id="refactor-advanced" class="refactor-advanced">
+            <summary>Customize (optional)</summary>
+            <fieldset id="refactor-settings" class="refactor-settings" aria-label="Optional refactor settings">
+              <label for="refactor-rules" class="refactor-label">RULES</label>
+              <p id="refactor-rules-help" class="refactor-help">Defaults are ready to use. Edit only if you want extra guidance.</p>
+              <textarea id="refactor-rules" class="pixel-input refactor-textarea" rows="4" aria-describedby="refactor-rules-help" placeholder="Keep behavior and public interfaces unchanged."></textarea>
+
+              <div class="refactor-scope">
+                <div>
+                  <label for="refactor-max-files" class="refactor-label">MAX EDITABLE FILES (1–5)</label>
+                  <input id="refactor-max-files" class="pixel-input" type="number" min="1" max="5" step="1" value="1" />
+                </div>
+                <div>
+                  <label for="refactor-max-lines" class="refactor-label">MAX CHANGED LINES (1–500)</label>
+                  <input id="refactor-max-lines" class="pixel-input" type="number" min="1" max="500" step="1" value="100" />
+                </div>
+              </div>
+
+              <p id="refactor-file-notice" class="refactor-help">Only selected source files can change. Read-only context is never edited.</p>
+              <div class="refactor-file-selectors">
+                <fieldset class="refactor-file-group">
+                  <legend>EDITABLE SOURCE FILES</legend>
+                  <p id="refactor-selected-count" class="refactor-help">0 selected</p>
+                  <div id="refactor-files" class="refactor-file-list"></div>
+                </fieldset>
+                <fieldset class="refactor-file-group">
+                  <legend>READ-ONLY CONTEXT (OPTIONAL)</legend>
+                  <p id="refactor-context-count" class="refactor-help">0 / 3 selected; never edited</p>
+                  <p class="refactor-help">No context is added automatically. Choose up to 3 files if useful.</p>
+                  <div id="refactor-context-files" class="refactor-file-list"></div>
+                </fieldset>
+              </div>
+            </fieldset>
+          </details>
+
+          <p id="refactor-sharing-note" class="refactor-help refactor-sharing-note">Continue sends only the listed source/context, your rules, goal, and any revision feedback to Gemini. Check these files for sensitive information. Nothing is committed.</p>
+          <div class="refactor-actions">
+            <button id="refactor-generate-btn" type="button" class="pixel-btn pixel-btn-primary" aria-describedby="refactor-sharing-note" disabled>USE THIS SCOPE &amp; GENERATE</button>
+            <button id="refactor-scope-back-btn" type="button" class="pixel-btn">BACK</button>
+          </div>
+        </section>
+
+        <section id="refactor-working-stage" class="refactor-stage refactor-working" aria-labelledby="refactor-working-heading" hidden>
+          <div class="refactor-loader" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <h3 id="refactor-working-heading" class="refactor-stage-title" tabindex="-1">Preparing your proposal.</h3>
+          <p id="refactor-working-message" class="refactor-stage-copy">Gemini is preparing a proposal from the scope you approved.</p>
+          <p class="refactor-help">Generating a proposal does not edit source files or run tests.</p>
+          <div class="refactor-actions">
+            <button id="refactor-cancel-btn" type="button" class="pixel-btn">CANCEL &amp; GO BACK</button>
+          </div>
+        </section>
+
+        <section id="refactor-review" class="refactor-stage refactor-review" aria-labelledby="refactor-review-heading" hidden>
+          <h3 id="refactor-review-heading" class="refactor-stage-title" tabindex="-1">Worth keeping?</h3>
+          <p class="refactor-warning"><strong>UNVERIFIED</strong> — tests have not run. Review the code before continuing.</p>
+          <p id="refactor-proposal-base" class="refactor-help refactor-base"></p>
+          <dl class="refactor-summary">
+            <dt>SUMMARY</dt><dd id="refactor-summary"></dd>
+            <dt>RULE FOLLOWED</dt><dd id="refactor-rule"></dd>
+            <dt>TRADEOFFS</dt><dd id="refactor-tradeoffs"></dd>
+          </dl>
+          <p id="refactor-no-changes" class="refactor-help" hidden>No worthwhile change was proposed. No draft PR can be opened.</p>
+          <p id="refactor-changed-lines" class="refactor-count" aria-live="polite"></p>
+          <div id="refactor-edits"></div>
+          <div class="refactor-tweak-actions">
+            <button id="refactor-smaller-btn" type="button" class="pixel-btn pixel-btn-sm">TRY A SMALLER CHANGE</button>
+            <button id="refactor-inline-btn" type="button" class="pixel-btn pixel-btn-sm">AVOID NEW HELPERS</button>
+          </div>
+          <details id="refactor-feedback-options" class="refactor-advanced refactor-feedback-options">
+            <summary>Add feedback (optional)</summary>
+            <div class="refactor-feedback-body">
+              <label for="refactor-feedback" class="refactor-label">WHAT WOULD YOU CHANGE?</label>
+              <textarea id="refactor-feedback" class="pixel-input refactor-textarea" rows="3" placeholder="Tell Buzz what to keep or improve."></textarea>
+              <button id="refactor-regenerate-btn" type="button" class="pixel-btn pixel-btn-sm">TRY AGAIN WITH FEEDBACK</button>
+            </div>
+          </details>
+          <div class="refactor-actions">
+            <button id="refactor-review-next-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>LOOKS GOOD — CONTINUE</button>
+            <button id="refactor-reject-btn" type="button" class="pixel-btn">DISCARD</button>
+          </div>
+        </section>
+
+        <section id="refactor-publish-stage" class="refactor-stage" aria-labelledby="refactor-publish-heading" hidden>
+          <h3 id="refactor-publish-heading" class="refactor-stage-title" tabindex="-1">Ready for a draft PR?</h3>
+          <p id="refactor-publish-summary" class="refactor-stage-copy"></p>
+          <ul id="refactor-publish-files" class="refactor-publish-files"></ul>
+          <p class="refactor-warning">This opens an unverified draft on a new branch only. Tests have not run. Buzz never merges changes.</p>
+          <div class="refactor-actions">
+            <button id="refactor-publish-btn" type="button" class="pixel-btn pixel-btn-primary" disabled>APPROVE &amp; OPEN DRAFT PR</button>
+            <button id="refactor-review-back-btn" type="button" class="pixel-btn">BACK TO REVIEW</button>
+          </div>
+        </section>
+
+        <section id="refactor-done-stage" class="refactor-stage" aria-labelledby="refactor-done-heading" hidden>
+          <h3 id="refactor-done-heading" class="refactor-stage-title" tabindex="-1">Draft ready for your team.</h3>
+          <div id="refactor-published" class="refactor-published"></div>
+          <p class="refactor-help">Run CI and get a human review before merging. Buzz never merges automatically.</p>
+          <div class="refactor-actions">
+            <button id="refactor-new-btn" type="button" class="pixel-btn pixel-btn-primary">START ANOTHER</button>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ================================================================== -->
     <!-- OVERLAY: PIXEL LIGHTNING BOLT BOUNCING & CODING ON A LAPTOP        -->
     <!-- ================================================================== -->
     <div id="patch-coding-overlay" class="patch-coding-overlay" aria-live="polite">
@@ -1105,9 +1291,9 @@
       window.addEventListener('resize', resizeRain);
       setInterval(stepRain, 55);
 
-      // 2. 4-Step Wizard Navigation & Persistent Browser State Controller
+      // 2. Wizard Navigation & Persistent Browser State (audits and refactors)
       window.buzzGoToStep = function (stepNumber, skipPersist) {
-        [1, 2, 3, 4].forEach(function (n) {
+        [1, 2, 3, 4, 5].forEach(function (n) {
           const el = document.getElementById('wizard-step-' + n);
           if (el) {
             if (n === stepNumber) {
@@ -1123,6 +1309,7 @@
           localStorage.setItem('buzz_wizard_step', String(stepToSave));
         }
         window.scrollTo({ top: 0, behavior: 'instant' });
+        window.dispatchEvent(new CustomEvent('buzz:step-change', { detail: { step: stepNumber } }));
       };
 
       function persistActiveReportState() {
@@ -1759,6 +1946,7 @@
         if (input && repoFullName) {
           input.value = repoFullName;
           localStorage.setItem('buzz_selected_repo', repoFullName);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
         }
         if (form && window.htmx) {
           htmx.trigger(form, 'submit');
@@ -1821,8 +2009,9 @@
       };
 
       // 5. Supabase GitHub OAuth & HTMX Header Bridge
-      const PUBLIC_SUPABASE_URL = 'https://nqdkfucblwmdmxmungev.supabase.co';
-      const PUBLIC_SUPABASE_ANON_KEY =
+      let authReady;
+      let PUBLIC_SUPABASE_URL = 'https://nqdkfucblwmdmxmungev.supabase.co';
+      let PUBLIC_SUPABASE_ANON_KEY =
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5xZGtmdWNibHdtZG14bXVuZ2V2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NDA2NjUsImV4cCI6MjEwODUxNjY2NX0.DRXe_D9liZmrR-mXbDOTU_0Ejkj1ywj5_CBdy90w6Eo';
 
       let supabaseUserId = localStorage.getItem('buzz_sb_uid') || '';
@@ -1907,6 +2096,10 @@
           if (repoInput) repoInput.value = '';
           updateSelectedRepoReadout('');
         }
+        if (repoInput) {
+          localStorage.setItem('buzz_selected_repo', repoInput.value);
+          repoInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
       };
 
       window.buzzRefreshRepos = async function () {
@@ -1935,7 +2128,10 @@
                 const customPanel = document.getElementById('custom-repo-panel');
                 const repoInput = document.getElementById('repo-input');
                 if (customPanel) customPanel.style.display = 'block';
-                if (repoInput) repoInput.value = savedRepo;
+                if (repoInput) {
+                  repoInput.value = savedRepo;
+                  repoInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
                 updateSelectedRepoReadout(savedRepo);
               }
             }
@@ -2039,11 +2235,12 @@
         window.location.search.indexOf('code=') !== -1 ||
         sessionStorage.getItem('buzz_oauth_pending') === '1';
 
-      let supabaseClient = window.supabase
-        ? window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY)
-        : null;
+      let supabaseClient = null;
+      let returningFromOAuth = hadOAuthCallbackOnBoot;
 
       function updateAuthBadge() {
+        // Consumers reuse this auth session; never put credentials in event details.
+        window.dispatchEvent(new CustomEvent('buzz:auth-change'));
         const isSignedIn = Boolean(githubUserHandle || githubProviderToken || supabaseUserId);
         const displayHandle = githubUserHandle || 'github-user';
 
@@ -2105,9 +2302,21 @@
         localStorage.removeItem('buzz_active_scan_id');
         localStorage.removeItem('buzz_selected_repo');
         sessionStorage.removeItem('buzz_oauth_pending');
+        sessionStorage.removeItem('buzz_refactor_return');
+        sessionStorage.removeItem('buzz_sb_uid');
+        sessionStorage.removeItem('buzz_gh_token');
+        sessionStorage.removeItem('buzz_gh_user');
         const reportContainer = document.getElementById('report-container');
         if (reportContainer) reportContainer.innerHTML = '';
         window.buzzGoToStep(1, true);
+      }
+
+      function finishOAuthNavigation() {
+        if (!returningFromOAuth) return;
+        returningFromOAuth = false;
+        sessionStorage.removeItem('buzz_oauth_pending');
+        // The refactor listener resumes its saved intent during updateAuthBadge.
+        if (!document.getElementById('wizard-step-5').classList.contains('active')) window.buzzGoToStep(2);
       }
 
       function applySupabaseSession(session) {
@@ -2135,8 +2344,9 @@
           githubAvatarUrl = meta.avatar_url;
           localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
         }
-        updateAuthBadge();
         restoreBrowserState();
+        updateAuthBadge();
+        finishOAuthNavigation();
         window.buzzRefreshRepos();
         window.buzzRefreshSavedAudits();
       }
@@ -2349,16 +2559,17 @@
             }
           } else if (savedStep === 2 || savedStep === 3) {
             window.buzzGoToStep(2, true);
+          } else if (savedStep === 5) {
+            window.buzzGoToStep(5, true);
           }
         }
       }
 
       async function initSupabaseAuth() {
-        updateAuthBadge();
         restoreBrowserState();
+        updateAuthBadge();
         if (hadOAuthCallbackOnBoot) {
-          sessionStorage.removeItem('buzz_oauth_pending');
-          window.buzzGoToStep(2);
+          finishOAuthNavigation();
           if (window.location.hash && window.history && window.history.replaceState) {
             window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
           }
@@ -2371,7 +2582,16 @@
           window.buzzRefreshSavedAudits();
         }
         try {
-          if (!supabaseClient && window.supabase) {
+          // Keep local/deployed environment configuration while hydrating cached UI immediately.
+          try {
+            const res = await fetch('/api/auth_config');
+            if (res.ok) {
+              const cfg = await res.json();
+              PUBLIC_SUPABASE_URL = cfg.supabase_url || '';
+              PUBLIC_SUPABASE_ANON_KEY = cfg.supabase_anon_key || '';
+            }
+          } catch (_) {}
+          if (PUBLIC_SUPABASE_URL && PUBLIC_SUPABASE_ANON_KEY && window.supabase) {
             supabaseClient = window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
           }
           if (supabaseClient) {
@@ -2387,10 +2607,6 @@
             supabaseClient.auth.onAuthStateChange(function (event, session) {
               if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') && session) {
                 applySupabaseSession(session);
-                if (hadOAuthCallbackOnBoot || sessionStorage.getItem('buzz_oauth_pending') === '1') {
-                  sessionStorage.removeItem('buzz_oauth_pending');
-                  window.buzzGoToStep(2);
-                }
               } else if (event === 'SIGNED_OUT') {
                 clearSavedAuth();
                 updateAuthBadge();
@@ -2400,21 +2616,26 @@
             const { data } = await supabaseClient.auth.getSession();
             if (data && data.session) {
               applySupabaseSession(data.session);
-              if (hadOAuthCallbackOnBoot) {
-                sessionStorage.removeItem('buzz_oauth_pending');
-                window.buzzGoToStep(2);
-              }
             }
           }
         } catch (_) {}
       }
 
-      window.buzzConnectGitHub = async function () {
+      window.buzzConnectGitHub = async function (options) {
+        await authReady;
+        const requireRepoAccess = options && options.requireRepoAccess === true;
         sessionStorage.setItem('buzz_oauth_pending', '1');
-        if (!supabaseClient && window.supabase) {
+        if (!supabaseClient && PUBLIC_SUPABASE_URL && PUBLIC_SUPABASE_ANON_KEY && window.supabase) {
           supabaseClient = window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
         }
         if (supabaseClient) {
+          if (requireRepoAccess) {
+            // Do not resume a reconnect with the credential GitHub just rejected.
+            githubProviderToken = '';
+            localStorage.removeItem('buzz_gh_token');
+            sessionStorage.removeItem('buzz_gh_token');
+            updateAuthBadge();
+          }
           const { error } = await supabaseClient.auth.signInWithOAuth({
             provider: 'github',
             options: {
@@ -2423,6 +2644,10 @@
             }
           });
           if (!error) return;
+          if (requireRepoAccess) throw new Error(error.message || 'Could not start GitHub sign-in. Please try again.');
+        }
+        if (requireRepoAccess) {
+          throw new Error('GitHub sign-in is unavailable. Check the Supabase auth settings, then refresh this page.');
         }
         // Direct redirect to Supabase GitHub OAuth authorize endpoint
         window.location.href =
@@ -2432,13 +2657,14 @@
       };
 
       window.buzzSignOutGitHub = async function () {
+        // Clear local review/source state immediately, even if remote sign-out is slow.
+        clearSavedAuth();
+        updateAuthBadge();
         if (supabaseClient) {
           try {
             await supabaseClient.auth.signOut();
           } catch (_) {}
         }
-        clearSavedAuth();
-        updateAuthBadge();
       };
 
       window.buzzSelectRepo = function (repoFullName) {
@@ -2447,6 +2673,7 @@
           input.value = repoFullName;
           localStorage.setItem('buzz_selected_repo', repoFullName);
           updateSelectedRepoReadout(repoFullName);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
           input.focus();
         }
       };
@@ -2455,7 +2682,7 @@
         await window.buzzConnectGitHub();
       };
 
-      initSupabaseAuth();
+      authReady = initSupabaseAuth();
     })();
   </script>
 </body>

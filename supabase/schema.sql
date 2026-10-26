@@ -106,35 +106,126 @@ CREATE POLICY "Public read access to CVEs"
     ON public.cves FOR SELECT
     USING (true);
 
--- Anyone can view & insert scan reports (or scope to auth.uid() in strict mode)
+-- Clients can read only their own reports. Only verified server operations write.
 DROP POLICY IF EXISTS "Read access to scans" ON public.scans;
-CREATE POLICY "Read access to scans"
-    ON public.scans FOR SELECT
-    USING (true);
-
+CREATE POLICY "Read access to scans" ON public.scans FOR SELECT TO authenticated
+    USING (user_id = auth.uid());
 DROP POLICY IF EXISTS "Insert access to scans" ON public.scans;
-CREATE POLICY "Insert access to scans"
-    ON public.scans FOR INSERT
-    WITH CHECK (true);
-
 DROP POLICY IF EXISTS "Update access to scans" ON public.scans;
-CREATE POLICY "Update access to scans"
-    ON public.scans FOR UPDATE
-    USING (true)
-    WITH CHECK (true);
-
 DROP POLICY IF EXISTS "Read access to scan findings" ON public.scan_findings;
-CREATE POLICY "Read access to scan findings"
-    ON public.scan_findings FOR SELECT
-    USING (true);
-
+CREATE POLICY "Read access to scan findings" ON public.scan_findings FOR SELECT TO authenticated
+    USING (EXISTS (SELECT 1 FROM public.scans s WHERE s.id = scan_id AND s.user_id = auth.uid()));
 DROP POLICY IF EXISTS "Insert access to scan findings" ON public.scan_findings;
-CREATE POLICY "Insert access to scan findings"
-    ON public.scan_findings FOR INSERT
-    WITH CHECK (true);
-
 DROP POLICY IF EXISTS "Update access to scan findings" ON public.scan_findings;
-CREATE POLICY "Update access to scan findings"
-    ON public.scan_findings FOR UPDATE
-    USING (true)
-    WITH CHECK (true);
+REVOKE ALL ON public.scans, public.scan_findings FROM anon, authenticated;
+GRANT SELECT ON public.scans, public.scan_findings TO authenticated;
+GRANT ALL ON public.scans, public.scan_findings TO service_role;
+
+ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS refactoring_json JSONB NULL;
+-- Only new, server-verified scans qualify for refactoring actions.
+ALTER TABLE public.scans ADD COLUMN IF NOT EXISTS source_verified BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- One transaction prevents a timed-out save leaving a scan without its findings.
+CREATE OR REPLACE FUNCTION public.save_audit(p_scan JSONB, p_findings JSONB)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+DECLARE
+    scan_row public.scans;
+    finding JSONB;
+    result_ids JSONB := '[]'::jsonb;
+    finding_id UUID;
+BEGIN
+    scan_row := jsonb_populate_record(NULL::public.scans, p_scan);
+    IF scan_row.user_id IS NULL THEN RAISE EXCEPTION 'Verified owner required'; END IF;
+    scan_row.id := COALESCE(scan_row.id, gen_random_uuid());
+    scan_row.created_at := now();
+    INSERT INTO public.scans SELECT scan_row.*;
+    FOR finding IN SELECT value FROM jsonb_array_elements(p_findings) LOOP
+        finding_id := gen_random_uuid();
+        INSERT INTO public.scan_findings
+            (id, scan_id, cve_id, title, package_name, severity, cvss_score, cwe_id,
+             file_path, line_reference, confidence, explanation, remediation_patch)
+        VALUES (finding_id, scan_row.id, finding->>'cve_id', finding->>'title',
+            finding->>'package_name', finding->>'severity', (finding->>'cvss_score')::numeric,
+            finding->>'cwe_id', finding->>'file_path', finding->>'line_reference',
+            finding->>'confidence', finding->>'explanation', finding->>'remediation_patch');
+        result_ids := result_ids || to_jsonb(finding_id);
+    END LOOP;
+    RETURN jsonb_build_object('id', scan_row.id, 'finding_ids', result_ids);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.save_audit(JSONB, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.save_audit(JSONB, JSONB) TO service_role;
+
+CREATE TABLE IF NOT EXISTS public.refactoring_patches (
+    id UUID PRIMARY KEY,
+    owner_id UUID NOT NULL REFERENCES auth.users(id),
+    scan_id UUID NOT NULL REFERENCES public.scans(id) ON DELETE CASCADE,
+    suggestion_id UUID NOT NULL,
+    payload JSONB NOT NULL,
+    digest TEXT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    status TEXT NOT NULL DEFAULT 'prepared' CHECK
+        (status IN ('prepared', 'publishing', 'failed', 'branch_created', 'published', 'stale', 'expired')),
+    commit_sha TEXT NULL,
+    pr_url TEXT NULL,
+    pr_number BIGINT NULL,
+    lease UUID NULL,
+    lease_until BIGINT NOT NULL DEFAULT 0,
+    last_error TEXT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS refactoring_one_active_suggestion
+    ON public.refactoring_patches(scan_id, suggestion_id)
+    WHERE status NOT IN ('expired', 'stale');
+ALTER TABLE public.refactoring_patches ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Owner reads refactoring patches" ON public.refactoring_patches;
+CREATE POLICY "Owner reads refactoring patches" ON public.refactoring_patches
+    FOR SELECT TO authenticated USING (owner_id = auth.uid());
+REVOKE ALL ON public.refactoring_patches FROM anon, authenticated;
+GRANT SELECT ON public.refactoring_patches TO authenticated;
+GRANT ALL ON public.refactoring_patches TO service_role;
+
+CREATE OR REPLACE FUNCTION public.guard_refactoring_patch()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NOT EXISTS (SELECT 1 FROM public.scans WHERE id = NEW.scan_id
+            AND user_id = NEW.owner_id AND source_verified) THEN
+            RAISE EXCEPTION 'Verified owned scan required';
+        END IF;
+    ELSIF ROW(NEW.id, NEW.owner_id, NEW.scan_id, NEW.suggestion_id, NEW.payload,
+              NEW.digest, NEW.expires_at, NEW.created_at)
+        IS DISTINCT FROM ROW(OLD.id, OLD.owner_id, OLD.scan_id, OLD.suggestion_id, OLD.payload,
+              OLD.digest, OLD.expires_at, OLD.created_at) THEN
+        RAISE EXCEPTION 'Reviewed patch is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS guard_refactoring_patch ON public.refactoring_patches;
+CREATE TRIGGER guard_refactoring_patch BEFORE INSERT OR UPDATE ON public.refactoring_patches
+    FOR EACH ROW EXECUTE FUNCTION public.guard_refactoring_patch();
+
+CREATE OR REPLACE FUNCTION public.claim_refactoring_patch(p_id UUID, p_owner UUID, p_digest TEXT, p_lease UUID)
+RETURNS SETOF public.refactoring_patches LANGUAGE sql SECURITY INVOKER SET search_path = public AS $$
+    UPDATE public.refactoring_patches SET status = 'publishing', lease = p_lease,
+        lease_until = extract(epoch FROM now())::bigint + 120
+    WHERE id = p_id AND owner_id = p_owner AND digest = p_digest
+        AND status IN ('prepared', 'publishing', 'failed', 'branch_created')
+        AND lease_until < extract(epoch FROM now())::bigint
+    RETURNING *;
+$$;
+REVOKE ALL ON FUNCTION public.claim_refactoring_patch(UUID, UUID, TEXT, UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_refactoring_patch(UUID, UUID, TEXT, UUID) TO service_role;
+
+-- Bound retained source payloads without destroying confirmed PR history. Schedule
+-- this service-only function daily in the deployment's existing database scheduler.
+CREATE OR REPLACE FUNCTION public.prune_refactoring_patches()
+RETURNS void LANGUAGE sql SECURITY INVOKER SET search_path = public AS $$
+    DELETE FROM public.refactoring_patches WHERE expires_at < extract(epoch FROM now())::bigint - 604800
+        AND status IN ('prepared', 'expired', 'stale', 'failed', 'publishing')
+        AND lease_until < extract(epoch FROM now())::bigint
+        AND commit_sha IS NULL AND pr_url IS NULL;
+$$;
+REVOKE ALL ON FUNCTION public.prune_refactoring_patches() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.prune_refactoring_patches() TO service_role;

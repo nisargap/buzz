@@ -33,6 +33,14 @@ name = "apply_patch"
 path = "api/apply_patch.rs"
 
 [[bin]]
+name = "prepare_refactor"
+path = "api/prepare_refactor.rs"
+
+[[bin]]
+name = "publish_refactor"
+path = "api/publish_refactor.rs"
+
+[[bin]]
 name = "scans"
 path = "api/scans.rs"
 
@@ -56,4 +64,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 url = "2"
 futures = "0.3"
 base64 = "0.22"
+sha2 = "0.10"
+similar = "2"
+uuid = { version = "1", features = ["v4"] }
 

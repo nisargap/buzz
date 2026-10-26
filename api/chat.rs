@@ -12,6 +12,16 @@ async fn main() -> Result<(), Error> {
 pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
     let config = AppConfig::from_env();
     let client = Client::new();
+    let user = match buzz::auth::authenticate(&client, &config, &req).await {
+        Ok(user) => user,
+        Err(message) => {
+            return Ok(Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .header("content-type", "text/html; charset=utf-8")
+                .header("cache-control", "no-store")
+                .body(Body::Text(buzz::templates::escape_html(&message)))?)
+        }
+    };
 
     let gh_token = req
         .headers()
@@ -33,6 +43,7 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
         &report_context,
         &question,
         gh_token.as_deref(),
+        Some(&user.id),
     )
     .await;
 

@@ -1,3 +1,7 @@
+pub mod auth;
+pub mod refactor_patch;
+pub mod refactoring;
+
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
@@ -120,6 +124,8 @@ pub struct RepoFile {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RepoSnapshot {
     pub full_name: String,
+    #[serde(default)]
+    pub public_repo: bool,
     pub default_branch: String,
     pub commit_sha: String,
     pub description: String,
@@ -255,6 +261,12 @@ pub struct AuditReport {
     pub cves_checked: usize,
     pub source_origin: String,
     pub findings: Vec<VulnerabilityFinding>,
+    #[serde(default)]
+    pub refactoring: refactoring::RefactoringResult,
+    #[serde(skip)]
+    pub refactoring_outcomes: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub source_verified: bool,
     #[serde(default)]
     pub diagram: Option<CodebaseDiagram>,
 }
@@ -480,22 +492,79 @@ pub fn builtin_seed_cves() -> Vec<CveRecord> {
 
 #[derive(Deserialize)]
 struct GitHubRepoMeta {
+    private: bool,
     default_branch: Option<String>,
     description: Option<String>,
 }
 
 #[derive(Deserialize)]
+struct GitHubCommit {
+    sha: String,
+    commit: GitHubCommitData,
+}
+
+#[derive(Deserialize)]
+struct GitHubCommitData {
+    tree: GitHubTreeRef,
+}
+
+#[derive(Deserialize)]
+struct GitHubTreeRef {
+    sha: String,
+}
+
+#[derive(Deserialize)]
 struct GitTreeResponse {
-    sha: Option<String>,
-    tree: Option<Vec<GitTreeEntry>>,
+    tree: Vec<GitTreeEntry>,
+    #[serde(default)]
+    truncated: bool,
 }
 
 #[derive(Clone, Deserialize)]
 struct GitTreeEntry {
     path: String,
+    sha: String,
     #[serde(rename = "type")]
     entry_type: String,
     size: Option<usize>,
+}
+
+// Bound both time and streamed bytes, including for metadata/tree responses.
+async fn fetch_snapshot_bytes(
+    client: &Client,
+    token: Option<&str>,
+    url: &str,
+    accept: &str,
+    max_bytes: usize,
+) -> Option<Vec<u8>> {
+    let mut request = client
+        .get(url)
+        .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
+        .header("Accept", accept)
+        .timeout(std::time::Duration::from_secs(15));
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    let mut response = request.send().await.ok()?;
+    if !response.status().is_success()
+        || response
+            .content_length()
+            .is_some_and(|length| length > max_bytes as u64)
+    {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Some(bytes)
+}
+
+fn is_full_snapshot_sha(sha: &str) -> bool {
+    sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 pub async fn fetch_user_repos(
@@ -557,8 +626,8 @@ pub async fn fetch_user_repos(
     }]
 }
 
-/// Fetches the ENTIRE GitHub repository tree and loads all source/manifest files
-/// concurrently so they can be fed into Gemini 4's 1M token context window.
+/// Pins a full commit SHA, then loads a bounded set of source/manifest blobs
+/// from that immutable tree for Gemini's context window.
 pub async fn fetch_repo_snapshot(
     client: &Client,
     config: &AppConfig,
@@ -567,163 +636,153 @@ pub async fn fetch_repo_snapshot(
 ) -> RepoSnapshot {
     let cleaned = repo_full_name
         .trim()
-        .trim_end_matches(".git")
         .trim_start_matches("https://github.com/")
         .trim_start_matches("http://github.com/")
         .trim_start_matches("github.com/")
-        .trim_matches('/');
-
+        .trim_matches('/')
+        .trim_end_matches(".git");
     let token = github_token.or(config.github_fallback_token.as_deref());
-
-    // Step 1: Query repository metadata for default_branch and description
-    let meta_url = format!("https://api.github.com/repos/{}", cleaned);
-    let mut meta_req = client
-        .get(&meta_url)
-        .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
-        .header("Accept", "application/vnd.github+json");
-    if let Some(tok) = token {
-        meta_req = meta_req.header("Authorization", format!("Bearer {}", tok));
-    }
-
-    let mut default_branch = "main".to_string();
+    let mut default_branch = String::new();
     let mut description = format!("Full-repository 1M context snapshot of {}", cleaned);
+    let mut commit_sha = String::new();
+    let mut public_repo = false;
 
-    if let Ok(resp) = meta_req.send().await {
-        if resp.status().is_success() {
-            if let Ok(meta) = resp.json::<GitHubRepoMeta>().await {
-                if let Some(b) = meta.default_branch {
-                    default_branch = b;
-                }
-                if let Some(d) = meta.description.filter(|s| !s.is_empty()) {
-                    description = d;
-                }
-            }
+    // Resolve the default branch once. Never substitute a guessed branch or a
+    // tree SHA for a commit SHA when metadata/commit resolution fails.
+    let pinned_tree = async {
+        let parts: Vec<&str> = cleaned.split('/').collect();
+        if parts.len() != 2
+            || parts.iter().any(|part| {
+                part.is_empty()
+                    || part.len() > 100
+                    || *part == "."
+                    || *part == ".."
+                    || !part.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
+                    })
+            })
+        {
+            return None;
         }
-    }
-
-    // Step 2: Fetch the entire recursive repository Git tree
-    let mut tree_entries: Vec<GitTreeEntry> = Vec::new();
-    let mut commit_sha = default_branch.clone();
-
-    let initial_branch = default_branch.clone();
-    for branch_candidate in [initial_branch.as_str(), "main", "master", "HEAD"] {
+        let repo_url = format!("https://api.github.com/repos/{}", cleaned);
+        let meta_bytes = fetch_snapshot_bytes(
+            client,
+            token,
+            &repo_url,
+            "application/vnd.github+json",
+            256 * 1024,
+        )
+        .await?;
+        let meta: GitHubRepoMeta = serde_json::from_slice(&meta_bytes).ok()?;
+        public_repo = !meta.private;
+        default_branch = meta.default_branch.filter(|branch| !branch.is_empty())?;
+        if let Some(value) = meta.description.filter(|value| !value.is_empty()) {
+            description = value;
+        }
+        let mut commit_url = url::Url::parse(&format!("{}/commits/", repo_url)).ok()?;
+        commit_url
+            .path_segments_mut()
+            .ok()?
+            .pop_if_empty()
+            .push(&default_branch);
+        let commit_bytes = fetch_snapshot_bytes(
+            client,
+            token,
+            commit_url.as_str(),
+            "application/vnd.github+json",
+            2 * 1024 * 1024,
+        )
+        .await?;
+        let commit: GitHubCommit = serde_json::from_slice(&commit_bytes).ok()?;
+        if !is_full_snapshot_sha(&commit.sha) || !is_full_snapshot_sha(&commit.commit.tree.sha) {
+            return None;
+        }
         let tree_url = format!(
-            "https://api.github.com/repos/{}/git/trees/{}?recursive=1",
-            cleaned, branch_candidate
+            "{}/git/trees/{}?recursive=1",
+            repo_url, commit.commit.tree.sha
         );
-        let mut tree_req = client
-            .get(&tree_url)
-            .header("User-Agent", "Buzz-Gemini4Argon-Auditor")
-            .header("Accept", "application/vnd.github+json");
-        if let Some(tok) = token {
-            tree_req = tree_req.header("Authorization", format!("Bearer {}", tok));
+        let tree_bytes = fetch_snapshot_bytes(
+            client,
+            token,
+            &tree_url,
+            "application/vnd.github+json",
+            8 * 1024 * 1024,
+        )
+        .await?;
+        let tree: GitTreeResponse = serde_json::from_slice(&tree_bytes).ok()?;
+        if tree.truncated {
+            return None;
         }
-
-        if let Ok(resp) = tree_req.send().await {
-            if resp.status().is_success() {
-                if let Ok(parsed) = resp.json::<GitTreeResponse>().await {
-                    if let Some(sha) = parsed.sha {
-                        commit_sha = sha.chars().take(8).collect();
-                    }
-                    if let Some(entries) = parsed.tree {
-                        if !entries.is_empty() {
-                            default_branch = branch_candidate.to_string();
-                            tree_entries = entries;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        commit_sha = commit.sha;
+        Some(tree.tree)
     }
-
+    .await;
+    let tree_entries = pinned_tree.unwrap_or_default();
     let total_tree_files = tree_entries
         .iter()
-        .filter(|e| e.entry_type == "blob")
+        .filter(|entry| entry.entry_type == "blob")
         .count();
 
-    // Step 3: Filter & prioritize all text/code/manifest blobs in the repository
-    let mut eligible_paths: Vec<String> = tree_entries
+    let mut eligible_entries: Vec<GitTreeEntry> = tree_entries
         .into_iter()
-        .filter(|e| e.entry_type == "blob")
-        .filter(|e| e.size.unwrap_or(0) <= MAX_SINGLE_FILE_BYTES)
-        .filter(|e| is_auditable_source_path(&e.path))
-        .map(|e| e.path)
+        .filter(|entry| entry.entry_type == "blob" && is_full_snapshot_sha(&entry.sha))
+        .filter(|entry| {
+            entry
+                .size
+                .is_some_and(|size| size > 0 && size <= MAX_SINGLE_FILE_BYTES)
+        })
+        .filter(|entry| is_auditable_source_path(&entry.path))
         .collect();
+    eligible_entries.sort_by(|left, right| {
+        file_priority_rank(&left.path)
+            .cmp(&file_priority_rank(&right.path))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    eligible_entries.truncate(MAX_FILES_TO_FETCH);
 
-    eligible_paths.sort_by_key(|p| file_priority_rank(p));
-    eligible_paths.truncate(MAX_FILES_TO_FETCH);
-
-    // If the GitHub Tree API rate-limited unauthenticated requests, fall back to probing common repo files
-    if eligible_paths.is_empty() {
-        eligible_paths = vec![
-            "Cargo.toml".to_string(),
-            "package.json".to_string(),
-            "requirements.txt".to_string(),
-            "pyproject.toml".to_string(),
-            "go.mod".to_string(),
-            "vercel.json".to_string(),
-            "README.md".to_string(),
-            "src/lib.rs".to_string(),
-            "src/main.rs".to_string(),
-            "api/analyze.rs".to_string(),
-            "api/cves.rs".to_string(),
-            "api/repos.rs".to_string(),
-            "api/health.rs".to_string(),
-            "api/auth_config.rs".to_string(),
-            "public/index.html".to_string(),
-            "supabase/schema.sql".to_string(),
-            "index.js".to_string(),
-            "server.js".to_string(),
-            "app.py".to_string(),
-            "main.py".to_string(),
-            "main.go".to_string(),
-        ];
-    }
-
-    // Step 4: Concurrently download all eligible files from raw.githubusercontent.com
-    let branch_ref = default_branch.clone();
-    let repo_ref = cleaned.to_string();
-    let token_owned = token.map(|s| s.to_string());
-
-    let downloaded: Vec<Option<(usize, RepoFile)>> = stream::iter(
-        eligible_paths.into_iter().enumerate(),
-    )
-    .map(|(order_idx, path)| {
-        let client = client.clone();
-        let repo_ref = repo_ref.clone();
-        let branch_ref = branch_ref.clone();
-        let token_owned = token_owned.clone();
-        async move {
-            let raw_url = format!(
-                "https://raw.githubusercontent.com/{}/{}/{}",
-                repo_ref, branch_ref, path
+    // Read immutable blob objects from the pinned commit's tree. The GitHub API
+    // accepts provider tokens for private repositories; raw branch URLs do not.
+    let downloads = stream::iter(eligible_entries.into_iter().enumerate())
+        .map(|(order_idx, entry)| async move {
+            let blob_url = format!(
+                "https://api.github.com/repos/{}/git/blobs/{}",
+                cleaned, entry.sha
             );
-            let mut req = client
-                .get(&raw_url)
-                .header("User-Agent", "Buzz-Gemini4Argon-Auditor");
-            if let Some(tok) = &token_owned {
-                req = req.header("Authorization", format!("Bearer {}", tok));
-            }
-            let resp = req.send().await.ok()?;
-            if !resp.status().is_success() {
+            let bytes = fetch_snapshot_bytes(
+                client,
+                token,
+                &blob_url,
+                "application/vnd.github.raw+json",
+                MAX_SINGLE_FILE_BYTES,
+            )
+            .await?;
+            if bytes.is_empty() || bytes.contains(&0) || Some(bytes.len()) != entry.size {
                 return None;
             }
-            let bytes = resp.bytes().await.ok()?;
-            if bytes.len() > MAX_SINGLE_FILE_BYTES || bytes.contains(&0) {
+            let content = String::from_utf8(bytes).ok()?;
+            if content.trim().is_empty() {
                 return None;
             }
-            let text = String::from_utf8(bytes.to_vec()).ok()?;
-            Some((order_idx, RepoFile { path, content: text }))
-        }
-    })
-    .buffer_unordered(24)
-    .collect()
-    .await;
-
-    let mut ordered_files: Vec<(usize, RepoFile)> =
-        downloaded.into_iter().flatten().collect();
+            Some((
+                order_idx,
+                RepoFile {
+                    path: entry.path,
+                    content,
+                },
+            ))
+        })
+        .buffer_unordered(16)
+        .collect::<Vec<Option<(usize, RepoFile)>>>();
+    let downloaded = tokio::time::timeout(std::time::Duration::from_secs(90), downloads)
+        .await
+        .unwrap_or_default();
+    let mut ordered_files: Vec<(usize, RepoFile)> = downloaded.into_iter().flatten().collect();
     ordered_files.sort_by_key(|(idx, _)| *idx);
+    if ordered_files.is_empty() {
+        // Preserve empty-source fallback reporting without representing an
+        // unusable snapshot as eligible for operations requiring a pinned SHA.
+        commit_sha.clear();
+    }
 
     // Step 5: Pack files into the 1M token context window with Auto-Compaction when needed
     let raw_total_chars: usize = ordered_files.iter().map(|(_, f)| f.content.len()).sum();
@@ -766,6 +825,7 @@ pub async fn fetch_repo_snapshot(
 
     RepoSnapshot {
         full_name: cleaned.to_string(),
+        public_repo,
         default_branch,
         commit_sha,
         description,
@@ -957,6 +1017,9 @@ pub async fn run_gemini_argon_audit(
             source_origin: snapshot.source_origin.clone(),
             findings: vec![],
             diagram: None,
+            refactoring: refactoring::RefactoringResult::default(),
+                refactoring_outcomes: std::collections::HashMap::new(),
+            source_verified: false,
         };
     }
 
@@ -1116,6 +1179,9 @@ async fn call_gemini_argon_api(
                 source_origin: snapshot.source_origin.clone(),
                 findings: parsed.findings,
                 diagram: None,
+            refactoring: refactoring::RefactoringResult::default(),
+                refactoring_outcomes: std::collections::HashMap::new(),
+            source_verified: false,
             });
         }
     }
@@ -1356,6 +1422,9 @@ fn synthesize_live_repo_audit(
         source_origin: snapshot.source_origin.clone(),
         findings,
         diagram: None,
+            refactoring: refactoring::RefactoringResult::default(),
+                refactoring_outcomes: std::collections::HashMap::new(),
+            source_verified: false,
     }
 }
 
@@ -1589,35 +1658,54 @@ fn build_fallback_diagram_from_snapshot(snapshot: &RepoSnapshot) -> CodebaseDiag
     }
 }
 
+/// Updates only a scan belonging to the server-verified Supabase owner.
 pub async fn save_diagram_to_scan(
     client: &Client,
     config: &AppConfig,
     scan_id: &str,
+    owner_id: &str,
     diagram: &CodebaseDiagram,
-) {
+) -> bool {
     let trimmed = scan_id.trim();
-    if trimmed.is_empty() {
-        return;
+    if !is_uuid(trimmed) || !is_uuid(owner_id) {
+        return false;
     }
     let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
-        return;
+        return false;
     };
     let url = format!(
-        "{}/rest/v1/scans?id=eq.{}",
+        "{}/rest/v1/scans?id=eq.{}&user_id=eq.{}&select=id",
         base_url.trim_end_matches('/'),
-        urlencoding_simple(trimmed)
+        trimmed,
+        owner_id
     );
-    let payload = serde_json::json!({
-        "diagram_json": diagram
-    });
-    let _ = client
+    let payload = serde_json::json!({ "diagram_json": diagram });
+    let Ok(response) = client
         .patch(&url)
         .header("apikey", api_key)
         .header("Accept", "application/json")
+        .header("Prefer", "return=representation")
         .header("Authorization", format!("Bearer {}", api_key))
+        .timeout(std::time::Duration::from_secs(15))
         .json(&payload)
         .send()
-        .await;
+        .await
+    else {
+        return false;
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    response
+        .json::<Vec<serde_json::Value>>()
+        .await
+        .is_ok_and(|rows| {
+            rows.len() == 1
+                && rows[0]
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|id| id.eq_ignore_ascii_case(trimmed))
+        })
 }
 
 // ============================================================================
@@ -1643,6 +1731,7 @@ pub async fn run_buzz_codebase_chat_html(
     report_context: &str,
     question: &str,
     github_token: Option<&str>,
+    owner_id: Option<&str>,
 ) -> String {
     let clean_repo = repo_full_name.trim();
     let trimmed_q = question.trim();
@@ -1704,12 +1793,15 @@ pub async fn run_buzz_codebase_chat_html(
                 source_origin: "Cached Audit Context".to_string(),
                 findings,
                 diagram,
+                refactoring: refactoring::RefactoringResult::default(),
+                refactoring_outcomes: std::collections::HashMap::new(),
+                source_verified: false,
             });
         }
     }
     if loaded_report.is_none() {
-        if let Some(sid) = scan_id.filter(|s| !s.trim().is_empty()) {
-            loaded_report = fetch_saved_scan_by_id(client, config, sid).await;
+        if let (Some(sid), Some(owner)) = (scan_id.filter(|s| !s.trim().is_empty()), owner_id) {
+            loaded_report = fetch_saved_scan_by_id(client, config, sid, owner).await;
         }
     }
 
@@ -2131,16 +2223,19 @@ pub async fn persist_scan_report(
     github_user: Option<&str>,
     scan_id: Option<&str>,
 ) {
-    let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
+    let (Some(base_url), Some(api_key)) = (
+        &config.supabase_url,
+        config.supabase_service_key.as_deref(),
+    ) else {
         return;
     };
 
-    let clean_uid = user_id
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty() && s.len() == 36);
+    let Some(clean_uid) = user_id.map(str::trim).filter(|uid| is_uuid(uid)) else {
+        return;
+    };
     let clean_gh_user = github_user.map(|s| s.trim()).filter(|s| !s.is_empty());
 
-    let scans_url = format!("{}/rest/v1/scans", base_url.trim_end_matches('/'));
+    let scans_url = format!("{}/rest/v1/rpc/save_audit", base_url.trim_end_matches('/'));
     let mut scan_payload = serde_json::json!({
         "user_id": clean_uid,
         "github_user": clean_gh_user,
@@ -2157,94 +2252,57 @@ pub async fn persist_scan_report(
         "estimated_tokens": report.estimated_tokens,
         "inspected_file_paths": report.inspected_file_paths,
         "cves_checked": report.cves_checked,
-        "diagram_json": report.diagram
+        "diagram_json": report.diagram,
+        "refactoring_json": report.refactoring,
+        "source_verified": report.source_verified
     });
     // Client-generated job id lets a page that reloaded mid-audit find this scan afterwards
     if let Some(id) = scan_id.filter(|id| is_uuid(id)) {
         scan_payload["id"] = serde_json::json!(id.to_ascii_lowercase());
     }
 
-    let insert_scan = |payload: &serde_json::Value| {
-        client
-            .post(&scans_url)
-            .header("apikey", api_key)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Prefer", "return=representation")
-            .json(payload)
-            .send()
+    let findings: Vec<serde_json::Value> = report.findings.iter().map(|finding| {
+        let mut value = serde_json::to_value(finding).unwrap_or_default();
+        value["severity"] = serde_json::json!(match finding.severity.to_uppercase().as_str() {
+            "CRITICAL" => "CRITICAL",
+            "HIGH" => "HIGH",
+            "MEDIUM" => "MEDIUM",
+            _ => "LOW",
+        });
+        value
+    }).collect();
+    // A server-side transaction commits the complete report, or nothing. A client
+    // timeout can lose the response, but can never expose a findings-free scan.
+    let Ok(response) = client
+        .post(scans_url)
+        .header("apikey", api_key)
+        .bearer_auth(api_key)
+        .json(&serde_json::json!({"p_scan": scan_payload, "p_findings": findings}))
+        .send()
+        .await
+    else {
+        return;
     };
-    let mut scan_resp = insert_scan(&scan_payload).await;
-    let inserted = matches!(&scan_resp, Ok(r) if r.status().is_success());
-    if !inserted {
-        if let Some(obj) = scan_payload.as_object_mut().filter(|o| o.contains_key("id")) {
-            // Never lose an audit over the client id — retry with a server-generated one
-            obj.remove("id");
-            scan_resp = insert_scan(&scan_payload).await;
-        }
+    if !response.status().is_success() {
+        return;
     }
-
-    if let Ok(resp) = scan_resp {
-        if let Ok(rows) = resp.json::<Vec<serde_json::Value>>().await {
-            if let Some(scan_id) = rows
-                .first()
-                .and_then(|r| r.get("id"))
-                .and_then(|v| v.as_str())
-            {
-                report.scan_id = Some(scan_id.to_string());
-
-                if !report.findings.is_empty() {
-                    let findings_url =
-                        format!("{}/rest/v1/scan_findings", base_url.trim_end_matches('/'));
-                    let finding_rows: Vec<serde_json::Value> = report
-                        .findings
-                        .iter()
-                        .map(|f| {
-                            let norm_sev = match f.severity.to_uppercase().as_str() {
-                                "CRITICAL" => "CRITICAL",
-                                "HIGH" => "HIGH",
-                                "MEDIUM" => "MEDIUM",
-                                _ => "LOW",
-                            };
-                            serde_json::json!({
-                                "scan_id": scan_id,
-                                "cve_id": f.cve_id,
-                                "title": f.title,
-                                "package_name": f.package_name,
-                                "severity": norm_sev,
-                                "cvss_score": f.cvss_score,
-                                "cwe_id": f.cwe_id,
-                                "file_path": f.file_path,
-                                "line_reference": f.line_reference,
-                                "confidence": f.confidence,
-                                "explanation": f.explanation,
-                                "remediation_patch": f.remediation_patch,
-                                "patch_created": false
-                            })
-                        })
-                        .collect();
-
-                    if let Ok(f_resp) = client
-                        .post(&findings_url)
-                        .header("apikey", api_key)
-                        .header("Authorization", format!("Bearer {}", api_key))
-                        .header("Prefer", "return=representation")
-                        .json(&finding_rows)
-                        .send()
-                        .await
-                    {
-                        if let Ok(inserted) = f_resp.json::<Vec<serde_json::Value>>().await {
-                            for (idx, row) in inserted.into_iter().enumerate() {
-                                if let Some(fid) = row.get("id").and_then(|v| v.as_str()) {
-                                    if let Some(f) = report.findings.get_mut(idx) {
-                                        f.id = Some(fid.to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    let Ok(saved) = response.json::<serde_json::Value>().await else {
+        return;
+    };
+    let Some(id) = saved.get("id").and_then(|v| v.as_str()).filter(|id| is_uuid(id)) else {
+        return;
+    };
+    let Some(ids) = saved.get("finding_ids").and_then(|v| v.as_array()) else {
+        return;
+    };
+    if ids.len() != report.findings.len()
+        || ids.iter().any(|id| !id.as_str().is_some_and(is_uuid))
+    {
+        return;
+    }
+    report.scan_id = Some(id.to_string());
+    for (finding, id) in report.findings.iter_mut().zip(ids) {
+        finding.id = id.as_str().map(str::to_string);
     }
 }
 
@@ -2287,102 +2345,67 @@ pub async fn update_finding_patch_state(
         .await;
 }
 
+/// `user_id` must come from `auth::authenticate`, never from a request header.
 pub async fn fetch_user_saved_scans(
     client: &Client,
     config: &AppConfig,
-    user_id: Option<&str>,
-    github_user: Option<&str>,
+    user_id: &str,
 ) -> Vec<SavedScanSummary> {
     let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
         return Vec::new();
     };
-
-    let clean_uid = user_id
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty() && s.len() == 36);
-    let clean_gh_user = github_user.map(|s| s.trim()).filter(|s| !s.is_empty());
-
-    // Never return saved audits in a logged-out state
-    if clean_uid.is_none() && clean_gh_user.is_none() {
+    if !is_uuid(user_id) {
         return Vec::new();
     }
-
-    let mut url = format!(
-        "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&order=created_at.desc&limit=15",
-        base_url.trim_end_matches('/')
+    // The explicit owner filter is mandatory even when the service key bypasses RLS.
+    let url = format!(
+        "{}/rest/v1/scans?user_id=eq.{}&select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&order=created_at.desc&limit=15",
+        base_url.trim_end_matches('/'),
+        user_id
     );
-
-    if let Some(uid) = clean_uid {
-        url.push_str(&format!("&user_id=eq.{}", urlencoding_simple(uid)));
-    } else if let Some(gh) = clean_gh_user {
-        url.push_str(&format!("&github_user=eq.{}", urlencoding_simple(gh)));
-    }
-
     if let Ok(resp) = client
         .get(&url)
         .header("apikey", api_key)
         .header("Authorization", format!("Bearer {}", api_key))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
     {
         if resp.status().is_success() {
             if let Ok(rows) = resp.json::<Vec<SavedScanSummary>>().await {
-                if !rows.is_empty() {
-                    return rows;
-                }
+                return rows;
             }
         }
     }
-
-    // If user_id query returned empty (e.g. earlier scans saved under github_user only), check github_user
-    if clean_uid.is_some() {
-        if let Some(gh) = clean_gh_user {
-            let gh_url = format!(
-                "{}/rest/v1/scans?select=id,repo_full_name,default_branch,commit_sha,risk_score,grade,files_inspected,cves_checked,github_user,created_at&github_user=eq.{}&order=created_at.desc&limit=15",
-                base_url.trim_end_matches('/'),
-                urlencoding_simple(gh)
-            );
-            if let Ok(resp) = client
-                .get(&gh_url)
-                .header("apikey", api_key)
-                .header("Authorization", format!("Bearer {}", api_key))
-                .send()
-                .await
-            {
-                if resp.status().is_success() {
-                    if let Ok(rows) = resp.json::<Vec<SavedScanSummary>>().await {
-                        return rows;
-                    }
-                }
-            }
-        }
-    }
-
     Vec::new()
 }
 
+/// `owner_id` must come from `auth::authenticate`, never from a request header.
 pub async fn fetch_saved_scan_by_id(
     client: &Client,
     config: &AppConfig,
     scan_id: &str,
+    owner_id: &str,
 ) -> Option<AuditReport> {
     let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) else {
         return None;
     };
-    let clean_id = urlencoding_simple(scan_id.trim());
-    if clean_id.is_empty() {
+    let clean_id = scan_id.trim().to_ascii_lowercase();
+    if !is_uuid(&clean_id) || !is_uuid(owner_id) {
         return None;
     }
 
     let scan_url = format!(
-        "{}/rest/v1/scans?id=eq.{}&select=*&limit=1",
+        "{}/rest/v1/scans?id=eq.{}&user_id=eq.{}&select=*&limit=1",
         base_url.trim_end_matches('/'),
-        clean_id
+        clean_id,
+        owner_id
     );
     let scan_resp = client
         .get(&scan_url)
         .header("apikey", api_key)
         .header("Authorization", format!("Bearer {}", api_key))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .ok()?;
@@ -2391,7 +2414,15 @@ pub async fn fetch_saved_scan_by_id(
     }
     let scan_rows: Vec<serde_json::Value> = scan_resp.json().await.ok()?;
     let scan = scan_rows.first()?;
+    if !scan
+        .get("user_id")
+        .and_then(|value| value.as_str())?
+        .eq_ignore_ascii_case(owner_id)
+    {
+        return None;
+    }
 
+    // Findings are fetched only after the parent scan's verified owner matches.
     let findings_url = format!(
         "{}/rest/v1/scan_findings?scan_id=eq.{}&select=*&order=cvss_score.desc",
         base_url.trim_end_matches('/'),
@@ -2401,14 +2432,15 @@ pub async fn fetch_saved_scan_by_id(
         .get(&findings_url)
         .header("apikey", api_key)
         .header("Authorization", format!("Bearer {}", api_key))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .ok()?;
-    let findings: Vec<VulnerabilityFinding> = if findings_resp.status().is_success() {
-        findings_resp.json().await.unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    // Never reinterpret a failed findings read as a clean security audit.
+    if !findings_resp.status().is_success() {
+        return None;
+    }
+    let findings: Vec<VulnerabilityFinding> = findings_resp.json().await.ok()?;
 
     let inspected_file_paths: Vec<String> = scan
         .get("inspected_file_paths")
@@ -2440,7 +2472,7 @@ pub async fn fetch_saved_scan_by_id(
         compute_canonical_security_metrics(&findings);
 
     Some(AuditReport {
-        scan_id: Some(clean_id),
+        scan_id: Some(clean_id.clone()),
         repo_full_name: scan
             .get("repo_full_name")
             .and_then(|v| v.as_str())
@@ -2481,8 +2513,14 @@ pub async fn fetch_saved_scan_by_id(
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize,
         source_origin: "Saved Supabase Audit Record".to_string(),
+        refactoring_outcomes: refactor_patch::saved_outcomes(client, config, &clean_id, owner_id).await,
         findings,
         diagram,
+        source_verified: scan.get("source_verified").and_then(|v| v.as_bool()).unwrap_or(false),
+        refactoring: match scan.get("refactoring_json").filter(|v| !v.is_null()) {
+            Some(value) => serde_json::from_value(value.clone()).unwrap_or_else(|_| refactoring::RefactoringResult::unavailable("The saved refactoring result could not be read. Run a fresh audit.")),
+            None => refactoring::RefactoringResult::default(),
+        },
     })
 }
 
@@ -4145,6 +4183,14 @@ pub mod templates {
                     🛡️ VULNERABILITIES ({hits})
                 </button>
                 <button
+                    id="tab-code-analysis"
+                    type="button"
+                    class="report-tab-btn"
+                    onclick="window.buzzSwitchReportTab('code-analysis')"
+                >
+                    CODE ANALYSIS
+                </button>
+                <button
                     id="tab-btn-diagram"
                     type="button"
                     class="report-tab-btn"
@@ -4167,6 +4213,10 @@ pub mod templates {
                 <div class="findings-grid">
                     {findings_html}
                 </div>
+            </div>
+
+            <div id="tab-content-code-analysis" class="report-tab-pane">
+                {refactoring_html}
             </div>
 
             <!-- Tab Pane 2: Interactive State Machine & User-Flow Diagram -->
@@ -4264,6 +4314,7 @@ pub mod templates {
             summary = escape_html(&report.executive_summary),
             files_chips = files_chips,
             findings_html = findings_html,
+            refactoring_html = crate::refactoring::render_suggestions(report),
             report_context = escaped_report_context
         )
     }
@@ -4353,6 +4404,7 @@ mod tests {
             None,
             report,
             "What language is this repo written in?",
+            None,
             None,
         )
         .await;

@@ -1035,6 +1035,17 @@
 
   </main>
 
+  <dialog id="refactor-confirm-dialog" class="refactor-confirm-dialog" aria-labelledby="refactor-confirm-title" aria-describedby="refactor-confirm-intro">
+    <h2 id="refactor-confirm-title" tabindex="-1">Confirm refactoring PR</h2>
+    <p id="refactor-confirm-intro">Review the same prepared patch and destination below. Publishing uses these exact bytes without regenerating code. Cancel makes no GitHub changes.</p>
+    <p class="refactor-warning">Tests have not run. Behavior preservation is intended, not verified.</p>
+    <div id="refactor-confirm-preview"></div>
+    <div class="refactor-dialog-actions">
+      <button id="refactor-confirm-cancel" type="button" class="pixel-btn pixel-btn-sm">Cancel, keep review</button>
+      <button id="refactor-confirm-publish" type="button" class="pixel-btn pixel-btn-primary pixel-btn-sm">Publish and open PR</button>
+    </div>
+  </dialog>
+
   <!-- ==================================================================== -->
   <!-- PIXEL RAIN + 4-STEP WIZARD + REAL TOKEN 1M CONTEXT LOADER            -->
   <!-- ==================================================================== -->
@@ -1129,9 +1140,10 @@
       function persistActiveReportState() {
         const reportContainer = document.getElementById('report-container');
         if (!reportContainer) return;
-        const html = reportContainer.innerHTML || '';
-        if (html.trim()) {
-          localStorage.setItem('buzz_active_report_html', html);
+        // Keep only navigation hints. Prepared diffs, acknowledgements, and outcomes
+        // must never be restored as actionable HTML from browser storage.
+        localStorage.removeItem('buzz_active_report_html');
+        if (reportContainer.innerHTML.trim()) {
           const headerCard = reportContainer.querySelector('[data-scan-id]');
           if (headerCard) {
             const scanId = headerCard.getAttribute('data-scan-id') || '';
@@ -1202,6 +1214,7 @@
       }
 
       function showRestoredReport(html, isDiagram) {
+        invalidateRefactorState();
         const reportContainer = document.getElementById('report-container');
         if (reportContainer) {
           reportContainer.innerHTML = html;
@@ -1291,6 +1304,8 @@
       }
 
       window.buzzConfigureAnalyzeRequest = function (event) {
+        invalidateRefactorState();
+        savedScanLoadId += 1;
         const params = event.detail.parameters;
         // Use the dropdown choice for both the request and the saved job (before-request is too late to change params)
         const picker = document.getElementById('gh-repo-picker');
@@ -1458,7 +1473,7 @@
       ];
 
       window.buzzStartAnalysisPage = async function (event, options) {
-        if (!(githubUserHandle || githubProviderToken || supabaseUserId)) {
+        if (!supabaseAccessToken) {
           if (event && event.preventDefault) event.preventDefault();
           clearPendingAnalysis();
           analysisInFlight = false;
@@ -1703,6 +1718,9 @@
       };
 
       window.buzzGenerateDiagramForAudit = async function (scanId, repoFullName) {
+        const account = accountRevision;
+        invalidateRefactorState();
+        savedScanLoadId += 1;
         const cleanRepo = (repoFullName || localStorage.getItem('buzz_selected_repo') || 'nisargap/buzz').trim();
         const startedAt = Date.now();
         const job = { kind: 'diagram', jobId: scanId || '', repo: cleanRepo, startedAt: startedAt };
@@ -1752,6 +1770,7 @@
 
           if (res.ok) {
             const html = await res.text();
+            if (account !== accountRevision || pageIsUnloading) return;
             const reportContainer = document.getElementById('report-container');
             const diagSlot = document.getElementById('diagram-section-slot');
 
@@ -1786,18 +1805,26 @@
         const vulnsBtn = document.getElementById('tab-btn-vulns');
         const diagBtn = document.getElementById('tab-btn-diagram');
         const chatBtn = document.getElementById('tab-btn-chat');
+        const codeBtn = document.getElementById('tab-code-analysis');
+        const codePane = document.getElementById('tab-content-code-analysis');
         const vulnsPane = document.getElementById('report-pane-vulns');
         const diagPane = document.getElementById('report-pane-diagram');
         const chatPane = document.getElementById('report-pane-chat');
 
-        [vulnsBtn, diagBtn, chatBtn].forEach(function (b) {
-          if (b) b.classList.remove('active');
+        [vulnsBtn, diagBtn, chatBtn, codeBtn].forEach(function (b) {
+          if (b) {
+            b.classList.remove('active');
+            b.setAttribute('aria-pressed', 'false');
+          }
         });
-        [vulnsPane, diagPane, chatPane].forEach(function (p) {
+        [vulnsPane, diagPane, chatPane, codePane].forEach(function (p) {
           if (p) p.classList.remove('active');
         });
 
-        if (tabName === 'diagram') {
+        if (tabName === 'code-analysis' && codePane) {
+          if (codeBtn) codeBtn.classList.add('active');
+          codePane.classList.add('active');
+        } else if (tabName === 'diagram') {
           if (diagBtn) diagBtn.classList.add('active');
           if (diagPane) diagPane.classList.add('active');
         } else if (tabName === 'chat') {
@@ -1809,6 +1836,9 @@
           if (vulnsBtn) vulnsBtn.classList.add('active');
           if (vulnsPane) vulnsPane.classList.add('active');
         }
+        [vulnsBtn, diagBtn, chatBtn, codeBtn].forEach(function (b) {
+          if (b) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
+        });
         persistActiveReportState();
       };
 
@@ -1909,7 +1939,7 @@
             messagesEl.scrollTop = messagesEl.scrollHeight;
             persistActiveReportState();
 
-            // If Buzz returned an auto-executing Create PR action, launch it immediately!
+            // Preserve the existing security-finding action; refactoring never uses this path.
             const autoBtn = wrapper.querySelector('[data-auto-execute-pr="true"]');
             if (autoBtn) {
               autoBtn.removeAttribute('data-auto-execute-pr');
@@ -1938,6 +1968,8 @@
       };
 
       window.buzzFinishAnalysisPage = function (event) {
+        const request = event && event.detail && event.detail.xhr;
+        if (request && htmxAccounts.has(request) && htmxAccounts.get(request) !== accountRevision) return;
         analysisInFlight = false;
         // Aborted because the page is going away — the saved job resumes when the user returns
         if (pageIsUnloading) return;
@@ -1980,6 +2012,8 @@
       };
 
       window.buzzReauditRepo = function (repoFullName) {
+        invalidateRefactorState();
+        savedScanLoadId += 1;
         const input = document.getElementById('repo-input');
         const form = document.getElementById('analyze-form');
         if (input && repoFullName) {
@@ -2056,45 +2090,20 @@
       let githubUserHandle = localStorage.getItem('buzz_gh_user') || '';
       let githubAvatarUrl = localStorage.getItem('buzz_gh_avatar') || '';
 
-      // Synchronously hydrate from @supabase/supabase-js native localStorage key (`sb-nqdkfucblwmdmxmungev-auth-token`)
-      try {
-        const sbRaw = localStorage.getItem('sb-nqdkfucblwmdmxmungev-auth-token');
-        if (sbRaw) {
-          const sbParsed = JSON.parse(sbRaw);
-          const sbSession = sbParsed.currentSession || sbParsed;
-          if (sbSession) {
-            if (sbSession.user && sbSession.user.id && !supabaseUserId) {
-              supabaseUserId = sbSession.user.id;
-              localStorage.setItem('buzz_sb_uid', supabaseUserId);
-            }
-            if (sbSession.provider_token && !githubProviderToken) {
-              githubProviderToken = sbSession.provider_token;
-              localStorage.setItem('buzz_gh_token', githubProviderToken);
-            }
-            const sbMeta = (sbSession.user && sbSession.user.user_metadata) || {};
-            const sbHandle =
-              sbMeta.user_name ||
-              sbMeta.preferred_username ||
-              sbMeta.name ||
-              (sbSession.user && sbSession.user.email) ||
-              '';
-            if (sbHandle && !githubUserHandle) {
-              githubUserHandle = sbHandle;
-              localStorage.setItem('buzz_gh_user', githubUserHandle);
-            }
-            if (sbMeta.avatar_url && !githubAvatarUrl) {
-              githubAvatarUrl = sbMeta.avatar_url;
-              localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
-            }
-          }
-        }
-      } catch (_) {}
+      // Cached labels are display hints only. Only the SDK session supplies the
+      // bearer token, and the server remains the authority for ownership/actions.
+      let supabaseAccessToken = '';
+      let authenticatedUserId = '';
+      let authRevision = 0;
+      let accountRevision = 0;
+      let savedScanLoadId = 0;
 
       function getAuthHeaders() {
         const headers = {};
+        if (!supabaseAccessToken) return headers;
+        headers.Authorization = 'Bearer ' + supabaseAccessToken;
         if (githubProviderToken) headers['X-GitHub-Token'] = githubProviderToken;
         if (githubUserHandle) headers['X-GitHub-User'] = githubUserHandle;
-        if (supabaseUserId) headers['X-Supabase-User-Id'] = supabaseUserId;
         return headers;
       }
 
@@ -2111,6 +2120,11 @@
       }
 
       window.buzzOnRepoDropdownChange = function (val) {
+        const currentRepo = document.getElementById('repo-input');
+        if (currentRepo && currentRepo.value !== val) {
+          invalidateRefactorState();
+          savedScanLoadId += 1;
+        }
         const customPanel = document.getElementById('custom-repo-panel');
         const repoInput = document.getElementById('repo-input');
 
@@ -2136,13 +2150,16 @@
       };
 
       window.buzzRefreshRepos = async function () {
-        if (!(githubUserHandle || githubProviderToken || supabaseUserId)) return;
+        if (!supabaseAccessToken) return;
+        const account = accountRevision;
         const slot = document.getElementById('connected-repos-slot');
         if (!slot) return;
         try {
           const res = await fetch('/api/repos', { headers: getAuthHeaders() });
           if (res.ok) {
-            slot.innerHTML = await res.text();
+            const html = await res.text();
+            if (account !== accountRevision) return;
+            slot.innerHTML = html;
             const picker = document.getElementById('gh-repo-picker');
             const savedRepo = localStorage.getItem('buzz_selected_repo') || '';
             if (picker && savedRepo) {
@@ -2170,13 +2187,16 @@
       };
 
       window.buzzRefreshSavedAudits = async function () {
-        if (!(githubUserHandle || githubProviderToken || supabaseUserId)) return;
+        if (!supabaseAccessToken) return;
+        const account = accountRevision;
+        const loadId = savedScanLoadId;
         const slot = document.getElementById('saved-audits-slot');
         if (!slot) return;
         try {
           const res = await fetch('/api/scans', { headers: getAuthHeaders() });
           if (res.ok) {
             const html = await res.text();
+            if (account !== accountRevision) return;
             slot.innerHTML = html;
 
             // If #report-container is empty on page load, preload the user's active or latest saved scan report!
@@ -2196,8 +2216,12 @@
                 );
                 if (scanRes.ok) {
                   const reportHtml = await scanRes.text();
+                  if (account !== accountRevision || loadId !== savedScanLoadId ||
+                      reportContainer.innerHTML.trim() || isAnalysisActive()) return;
                   if (reportHtml.trim()) {
+                    invalidateRefactorState();
                     reportContainer.innerHTML = reportHtml;
+                    if (window.htmx) window.htmx.process(reportContainer);
                     persistActiveReportState();
                     const savedStep = parseInt(localStorage.getItem('buzz_wizard_step') || '1', 10);
                     if (savedStep === 4 && !isAnalysisActive()) {
@@ -2230,17 +2254,10 @@
       const urlProviderToken = hashParams.get('provider_token') || '';
       const urlRefreshToken = hashParams.get('refresh_token') || '';
 
-      if (urlProviderToken) {
-        githubProviderToken = urlProviderToken;
-        localStorage.setItem('buzz_gh_token', githubProviderToken);
-      }
+      // URL claims can label the callback screen, but do not authorize requests.
       if (urlAccessToken) {
         const claims = decodeJwtPayload(urlAccessToken);
         if (claims) {
-          if (claims.sub) {
-            supabaseUserId = claims.sub;
-            localStorage.setItem('buzz_sb_uid', supabaseUserId);
-          }
           const meta = claims.user_metadata || {};
           const handle =
             meta.user_name ||
@@ -2326,92 +2343,343 @@
         }
       }
 
+      function clearAccountReportState() {
+        accountRevision += 1;
+        savedScanLoadId += 1;
+        invalidateRefactorState();
+        clearPendingAnalysis();
+        const form = document.getElementById('analyze-form');
+        if (analysisInFlight && form && window.htmx) window.htmx.trigger(form, 'htmx:abort');
+        analysisInFlight = false;
+        stopAllAnalysisTimers();
+        initialViewRestored = false;
+        ['buzz_wizard_step', 'buzz_active_report_html', 'buzz_active_scan_id', 'buzz_selected_repo'].forEach(function (key) {
+          localStorage.removeItem(key);
+        });
+        ['report-container', 'saved-audits-slot', 'connected-repos-slot'].forEach(function (id) {
+          const element = document.getElementById(id);
+          if (element) element.replaceChildren();
+        });
+        const input = document.getElementById('repo-input');
+        if (input) input.value = '';
+        updateSelectedRepoReadout('');
+      }
+
       function clearSavedAuth() {
+        authRevision += 1;
+        supabaseAccessToken = '';
+        authenticatedUserId = '';
         supabaseUserId = '';
         githubProviderToken = '';
         githubUserHandle = '';
         githubAvatarUrl = '';
-        localStorage.removeItem('buzz_sb_uid');
-        localStorage.removeItem('buzz_gh_token');
-        localStorage.removeItem('buzz_gh_user');
-        localStorage.removeItem('buzz_gh_avatar');
-        localStorage.removeItem('buzz_wizard_step');
-        localStorage.removeItem('buzz_active_report_html');
-        localStorage.removeItem('buzz_active_scan_id');
-        localStorage.removeItem('buzz_selected_repo');
+        ['buzz_sb_uid', 'buzz_gh_token', 'buzz_gh_user', 'buzz_gh_avatar'].forEach(function (key) {
+          localStorage.removeItem(key);
+        });
+        clearAccountReportState();
         sessionStorage.removeItem('buzz_oauth_pending');
-        const reportContainer = document.getElementById('report-container');
-        if (reportContainer) reportContainer.innerHTML = '';
         window.buzzGoToStep(1, true);
       }
 
+      let callbackProviderConsumed = false;
       function applySupabaseSession(session) {
-        if (!session) return;
-        if (session.user && session.user.id) {
-          supabaseUserId = session.user.id;
-          localStorage.setItem('buzz_sb_uid', supabaseUserId);
+        if (!session || !session.user || !session.user.id || !session.access_token) return;
+        const userId = session.user.id;
+        const previousUserId = authenticatedUserId || supabaseUserId;
+        if (previousUserId !== userId) {
+          clearAccountReportState();
+          githubProviderToken = '';
+          githubUserHandle = '';
+          githubAvatarUrl = '';
+          ['buzz_gh_token', 'buzz_gh_user', 'buzz_gh_avatar'].forEach(function (key) { localStorage.removeItem(key); });
         }
-        if (session.provider_token) {
-          githubProviderToken = session.provider_token;
-          localStorage.setItem('buzz_gh_token', githubProviderToken);
+        const providerToken = session.provider_token ||
+          (!callbackProviderConsumed && session.access_token === urlAccessToken ? urlProviderToken : '') || githubProviderToken;
+        callbackProviderConsumed = true;
+        if (supabaseAccessToken !== session.access_token || githubProviderToken !== providerToken || authenticatedUserId !== userId) {
+          authRevision += 1;
+          invalidateRefactorState();
         }
-        const meta = (session.user && session.user.user_metadata) || {};
-        const handle =
-          meta.user_name ||
-          meta.preferred_username ||
-          meta.name ||
-          (session.user && session.user.email) ||
-          '';
-        if (handle) {
-          githubUserHandle = handle;
-          localStorage.setItem('buzz_gh_user', githubUserHandle);
-        }
-        if (meta.avatar_url) {
-          githubAvatarUrl = meta.avatar_url;
-          localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
-        }
+        authenticatedUserId = userId;
+        supabaseUserId = userId;
+        supabaseAccessToken = session.access_token;
+        githubProviderToken = providerToken;
+        localStorage.setItem('buzz_sb_uid', userId);
+        if (providerToken) localStorage.setItem('buzz_gh_token', providerToken);
+        const meta = session.user.user_metadata || {};
+        githubUserHandle = meta.user_name || meta.preferred_username || meta.name || session.user.email || '';
+        githubAvatarUrl = meta.avatar_url || '';
+        localStorage.setItem('buzz_gh_user', githubUserHandle);
+        localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
         updateAuthBadge();
         restoreBrowserState();
         window.buzzRefreshRepos();
         window.buzzRefreshSavedAudits();
       }
 
-      async function verifyGitHubProfileFromToken() {
-        if (!githubProviderToken) return;
-        try {
-          const r = await fetch('https://api.github.com/user', {
-            headers: {
-              Accept: 'application/vnd.github+json',
-              Authorization: 'Bearer ' + githubProviderToken
-            }
-          });
-          if (r.ok) {
-            const profile = await r.json();
-            if (profile && profile.login) {
-              githubUserHandle = profile.login;
-              localStorage.setItem('buzz_gh_user', githubUserHandle);
-            }
-            if (profile && profile.avatar_url) {
-              githubAvatarUrl = profile.avatar_url;
-              localStorage.setItem('buzz_gh_avatar', githubAvatarUrl);
-            }
-            updateAuthBadge();
-            window.buzzRefreshRepos();
-            window.buzzRefreshSavedAudits();
-          }
-        } catch (_) {}
+      const htmxAccounts = new WeakMap();
+      document.body.addEventListener('htmx:configRequest', function (evt) {
+        Object.assign(evt.detail.headers, getAuthHeaders());
+      });
+      document.body.addEventListener('htmx:beforeRequest', function (evt) {
+        if (evt.detail.xhr) htmxAccounts.set(evt.detail.xhr, accountRevision);
+      });
+      document.body.addEventListener('htmx:beforeSwap', function (evt) {
+        if (htmxAccounts.has(evt.detail.xhr) && htmxAccounts.get(evt.detail.xhr) !== accountRevision) {
+          evt.detail.shouldSwap = false;
+        }
+      });
+
+      // Refactoring is an explicit prepare -> review -> confirm flow, separate from security patches.
+      let refactorRevision = 0;
+      let activeRefactorReview = null;
+      const refactorRequests = new Map();
+      const preparedRefactorReviews = new WeakSet();
+      const refactorDialog = document.getElementById('refactor-confirm-dialog');
+      const refactorPreview = document.getElementById('refactor-confirm-preview');
+      const refactorPublishButton = document.getElementById('refactor-confirm-publish');
+
+      function closeRefactorDialog(restoreFocus) {
+        const review = activeRefactorReview;
+        activeRefactorReview = null;
+        if (refactorDialog.open) refactorDialog.close();
+        refactorPreview.replaceChildren();
+        if (restoreFocus && review && review.trigger.isConnected) review.trigger.focus();
       }
 
-      document.body.addEventListener('htmx:configRequest', function (evt) {
-        if (githubProviderToken) {
-          evt.detail.headers['X-GitHub-Token'] = githubProviderToken;
+      function invalidateRefactorState() {
+        refactorRevision += 1;
+        closeRefactorDialog(false);
+        refactorRequests.forEach(function (request, card) {
+          request.controller.abort();
+          setRefactorBusy(card, false, request.controls);
+        });
+        refactorRequests.clear();
+        document.querySelectorAll('#report-container .refactor-result').forEach(function (result) {
+          result.replaceChildren();
+        });
+      }
+
+      function refactorContext(btn) {
+        const card = btn && btn.closest('.refactor-card');
+        const pane = document.getElementById('tab-content-code-analysis');
+        const report = document.getElementById('report-container');
+        const header = report && report.querySelector('.report-header-card[data-scan-id]');
+        // Never execute a refactoring action supplied in a chat response or cached HTML.
+        if (!card || !pane || !pane.contains(card) || !header || !card.dataset.scanId ||
+            header.dataset.scanId !== card.dataset.scanId) return null;
+        return {
+          card: card, header: header, scanId: card.dataset.scanId,
+          suggestionId: card.dataset.suggestionId, repo: header.dataset.repo,
+          revision: refactorRevision, auth: authRevision,
+          result: card.querySelector('.refactor-result')
+        };
+      }
+
+      function isCurrentRefactor(context) {
+        return context && context.result && context.card.isConnected && context.header.isConnected &&
+          context.revision === refactorRevision && context.auth === authRevision &&
+          context.card.dataset.scanId === context.scanId && context.card.dataset.suggestionId === context.suggestionId &&
+          context.header.dataset.scanId === context.scanId && context.header.dataset.repo === context.repo &&
+          context.card.querySelector('.refactor-result') === context.result &&
+          context.card.closest('#tab-content-code-analysis') !== null;
+      }
+
+      function setRefactorBusy(card, busy, controls) {
+        card.setAttribute('aria-busy', String(busy));
+        if (busy) {
+          controls = Array.from(card.querySelectorAll('button, input')).map(function (control) {
+            const state = { control: control, disabled: control.disabled };
+            control.disabled = true;
+            return state;
+          });
+        } else {
+          (controls || []).forEach(function (state) { state.control.disabled = state.disabled; });
         }
-        if (githubUserHandle) {
-          evt.detail.headers['X-GitHub-User'] = githubUserHandle;
+        return controls;
+      }
+
+      function refactorMessage(result, message, isError) {
+        const notice = document.createElement('p');
+        notice.className = 'refactor-status' + (isError ? ' refactor-error' : '');
+        notice.setAttribute('role', isError ? 'alert' : 'status');
+        notice.textContent = message;
+        result.appendChild(notice);
+        return notice;
+      }
+
+      async function requestRefactor(context, endpoint, params, publishing) {
+        if (!isCurrentRefactor(context) || refactorRequests.has(context.card)) return;
+        const headers = getAuthHeaders();
+        if (!headers.Authorization || !headers['X-GitHub-Token']) {
+          refactorMessage(context.result, 'Connect GitHub with an active sign-in session before preparing or publishing a patch.', true);
+          return;
         }
-        if (supabaseUserId) {
-          evt.detail.headers['X-Supabase-User-Id'] = supabaseUserId;
+        context.result.setAttribute('aria-live', 'polite');
+        const request = { context: context, controller: new AbortController(), controls: setRefactorBusy(context.card, true) };
+        refactorRequests.set(context.card, request);
+        context.result.querySelectorAll(':scope > .refactor-status, :scope > .refactor-outcome').forEach(function (el) {
+          if (!el.querySelector('.refactor-review')) el.remove();
+        });
+        const status = refactorMessage(context.result, publishing
+          ? 'Publishing the reviewed patch. Waiting for the server to confirm the GitHub outcome...'
+          : 'Preparing an exact single-file patch. No GitHub changes are being made.', false);
+        headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST', headers: headers, body: params.toString(), signal: request.controller.signal
+          });
+          const html = await res.text();
+          if (!isCurrentRefactor(context)) return;
+          status.remove();
+          if (html.trim()) {
+            // Error/partial outcomes remain visible even on a non-200 response. Keep the
+            // reviewed artifact on failure so a retry publishes it, never regenerates it.
+            if (res.ok && !publishing) context.result.replaceChildren();
+            const outcome = document.createElement('div');
+            outcome.className = 'refactor-outcome';
+            outcome.innerHTML = html;
+            context.result.appendChild(outcome);
+            if (window.htmx) window.htmx.process(outcome);
+            outcome.querySelectorAll('.refactor-diff').forEach(function (diff) {
+              diff.tabIndex = 0;
+              diff.setAttribute('aria-label', 'Exact prepared patch diff');
+            });
+            outcome.querySelectorAll('.refactor-ack').forEach(function (ack) { ack.checked = false; });
+            if (outcome.querySelector('[data-published="true"]')) {
+              context.result.querySelectorAll('.refactor-review').forEach(function (review) { review.remove(); });
+              request.controls.forEach(function (state) { state.disabled = true; });
+            }
+            if (!publishing && !outcome.querySelector('[data-published="true"]')) {
+              let prepared = false;
+              outcome.querySelectorAll('.refactor-review').forEach(function (review) {
+                const diff = review.querySelector('.refactor-diff');
+                const ack = review.querySelector('.refactor-ack');
+                if (res.ok && review.dataset.patchId && review.dataset.digest && diff && diff.textContent.trim() && ack) {
+                  preparedRefactorReviews.add(review);
+                  prepared = true;
+                  diff.focus({ preventScroll: true });
+                } else {
+                  review.querySelectorAll('button, input').forEach(function (control) { control.disabled = true; });
+                }
+              });
+              if (res.ok && !prepared) refactorMessage(context.result, 'No complete patch preview was returned. Please retry generating the patch.', true);
+            }
+          } else {
+            refactorMessage(context.result, publishing
+              ? 'No publication outcome was returned. Reload the saved audit to check the server status before retrying this reviewed patch.'
+              : 'No patch was returned. You can retry generating the patch.', true);
+          }
+        } catch (error) {
+          if (!isCurrentRefactor(context) || error.name === 'AbortError') return;
+          status.remove();
+          refactorMessage(context.result, publishing
+            ? 'The publication outcome is unknown because the connection failed. Reload the saved audit to check status, or retry this same reviewed patch; do not generate another patch.'
+            : 'Could not prepare the patch. No publication was requested. Please retry.', true);
+        } finally {
+          if (refactorRequests.get(context.card) === request) {
+            refactorRequests.delete(context.card);
+            setRefactorBusy(context.card, false, request.controls);
+          }
         }
+      }
+
+      window.buzzPrepareRefactor = function (btn) {
+        const context = refactorContext(btn);
+        if (!isCurrentRefactor(context) || !context.suggestionId || refactorRequests.has(context.card)) return false;
+        // A cancelled review is reusable; generating again must not silently replace it.
+        const review = context.result.querySelector('.refactor-review');
+        if (review && preparedRefactorReviews.has(review)) {
+          review.scrollIntoView({ block: 'nearest' });
+          const ack = review.querySelector('.refactor-ack');
+          if (ack) ack.focus();
+          return false;
+        }
+        const params = new URLSearchParams({ scan_id: context.scanId, suggestion_id: context.suggestionId });
+        requestRefactor(context, '/api/prepare_refactor', params, false);
+        return false;
+      };
+
+      window.buzzConfirmRefactor = function (btn) {
+        const context = refactorContext(btn);
+        const review = btn && btn.closest('.refactor-review');
+        if (!isCurrentRefactor(context) || !review || !preparedRefactorReviews.has(review) ||
+            refactorRequests.has(context.card) || activeRefactorReview) return false;
+        const ack = review.querySelector('.refactor-ack');
+        context.result.querySelectorAll('[data-refactor-ack-error]').forEach(function (notice) { notice.remove(); });
+        if (!ack || ack.disabled || !ack.checked) {
+          refactorMessage(context.result, 'Acknowledge that you have reviewed this patch and its destination before continuing.', true)
+            .setAttribute('data-refactor-ack-error', 'true');
+          if (ack) ack.focus();
+          return false;
+        }
+        const diff = review.querySelector('.refactor-diff');
+        if (!review.dataset.patchId || !review.dataset.digest || !diff || !diff.textContent.trim()) {
+          refactorMessage(context.result, 'This preview is incomplete. Reload the saved audit before preparing a new patch.', true);
+          return false;
+        }
+        // Clone the server-rendered review verbatim: never reconstruct metadata or diff bytes.
+        const preview = review.cloneNode(true);
+        preview.removeAttribute('aria-busy');
+        preview.querySelectorAll('.refactor-ack').forEach(function (input) {
+          const label = input.closest('label');
+          (label || input).remove();
+        });
+        preview.querySelectorAll('button, input, script').forEach(function (el) { el.remove(); });
+        [preview].concat(Array.from(preview.querySelectorAll('*'))).forEach(function (el) {
+          Array.from(el.attributes).forEach(function (attr) {
+            if (attr.name === 'id' || attr.name.startsWith('on') || attr.name.startsWith('hx-')) el.removeAttribute(attr.name);
+          });
+        });
+        refactorPreview.replaceChildren(preview);
+        activeRefactorReview = {
+          context: context, review: review, trigger: btn,
+          patchId: review.dataset.patchId, digest: review.dataset.digest
+        };
+        refactorPublishButton.disabled = false;
+        refactorDialog.showModal();
+        document.getElementById('refactor-confirm-title').focus();
+        return false;
+      };
+
+      document.getElementById('refactor-confirm-cancel').addEventListener('click', function () {
+        closeRefactorDialog(true);
+      });
+      refactorDialog.addEventListener('cancel', function (event) {
+        event.preventDefault();
+        closeRefactorDialog(true);
+      });
+      refactorPublishButton.addEventListener('click', function () {
+        const active = activeRefactorReview;
+        if (!active) return;
+        const ack = active.review.querySelector('.refactor-ack');
+        if (!isCurrentRefactor(active.context) || !active.review.isConnected || !ack || !ack.checked ||
+            active.review.dataset.patchId !== active.patchId || active.review.dataset.digest !== active.digest) {
+          closeRefactorDialog(true);
+          return;
+        }
+        refactorPublishButton.disabled = true;
+        const params = new URLSearchParams({ patch_id: active.patchId, digest: active.digest, confirmed: 'true' });
+        closeRefactorDialog(true);
+        requestRefactor(active.context, '/api/publish_refactor', params, true);
+      });
+
+      // A report swap can detach a card without going through a navigation handler.
+      new MutationObserver(function () {
+        if (activeRefactorReview && (!isCurrentRefactor(activeRefactorReview.context) ||
+            !activeRefactorReview.review.isConnected ||
+            activeRefactorReview.review.dataset.patchId !== activeRefactorReview.patchId ||
+            activeRefactorReview.review.dataset.digest !== activeRefactorReview.digest)) closeRefactorDialog(false);
+        refactorRequests.forEach(function (request, card) {
+          if (!isCurrentRefactor(request.context)) {
+            request.controller.abort();
+            setRefactorBusy(card, false, request.controls);
+            refactorRequests.delete(card);
+          }
+        });
+      }).observe(document.getElementById('report-container'), {
+        childList: true, subtree: true, attributes: true,
+        attributeFilter: ['data-scan-id', 'data-suggestion-id', 'data-repo', 'data-patch-id', 'data-digest']
       });
 
       // 6. Bouncing Lightning Bolt Coding on a Laptop Overlay & Direct Apply Patch Handler
@@ -2454,6 +2722,7 @@
         if (evt && evt.preventDefault) evt.preventDefault();
         if (evt && evt.stopPropagation) evt.stopPropagation();
 
+        if (btnEl && btnEl.closest('.refactor-card, .refactor-review')) return false;
         const form = btnEl ? btnEl.closest('form') : null;
         if (!form) return false;
 
@@ -2470,12 +2739,8 @@
             params.append(key, String(val));
           });
 
-          const headers = {
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-          };
-          if (githubProviderToken) headers['X-GitHub-Token'] = githubProviderToken;
-          if (githubUserHandle) headers['X-GitHub-User'] = githubUserHandle;
-          if (supabaseUserId) headers['X-Supabase-User-Id'] = supabaseUserId;
+          const headers = getAuthHeaders();
+          headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
 
           const res = await fetch('/api/apply_patch', {
             method: 'POST',
@@ -2508,26 +2773,32 @@
       });
 
       window.buzzLoadSavedScan = async function (scanId) {
-        if (!scanId) return;
-        const headers = {};
-        if (githubProviderToken) headers['X-GitHub-Token'] = githubProviderToken;
-        if (githubUserHandle) headers['X-GitHub-User'] = githubUserHandle;
-        if (supabaseUserId) headers['X-Supabase-User-Id'] = supabaseUserId;
-
+        if (!scanId || !supabaseAccessToken) return;
+        invalidateRefactorState();
+        const loadId = ++savedScanLoadId;
+        const account = accountRevision;
+        const reportContainer = document.getElementById('report-container');
+        if (!reportContainer) return;
+        reportContainer.textContent = 'Loading the saved audit from the server...';
+        window.buzzGoToStep(4);
         try {
           const res = await fetch('/api/scans?id=' + encodeURIComponent(scanId), {
-            headers: headers
+            headers: getAuthHeaders()
           });
-          if (res.ok) {
-            const html = await res.text();
-            const reportContainer = document.getElementById('report-container');
-            if (reportContainer) {
-              reportContainer.innerHTML = html;
-              persistActiveReportState();
-              window.buzzGoToStep(4);
-            }
+          const html = await res.text();
+          if (loadId !== savedScanLoadId || account !== accountRevision) return;
+          if (res.ok && html.trim()) {
+            reportContainer.innerHTML = html;
+            if (window.htmx) window.htmx.process(reportContainer);
+            persistActiveReportState();
+          } else {
+            reportContainer.textContent = 'This saved audit could not be loaded for the current account. Select an available audit or sign in again.';
           }
-        } catch (_) {}
+        } catch (_) {
+          if (loadId === savedScanLoadId && account === accountRevision) {
+            reportContainer.textContent = 'Could not reach the saved audit. Please try loading it again.';
+          }
+        }
       };
 
       document.body.addEventListener('htmx:afterSettle', function (evt) {
@@ -2555,27 +2826,22 @@
           if (!hasAttachedRepoInputListener) {
             hasAttachedRepoInputListener = true;
             repoInput.addEventListener('input', function () {
+              invalidateRefactorState();
+              savedScanLoadId += 1;
               localStorage.setItem('buzz_selected_repo', repoInput.value);
               updateSelectedRepoReadout(repoInput.value);
             });
           }
         }
 
-        const isSignedIn = Boolean(githubUserHandle || githubProviderToken || supabaseUserId);
-        if (!isSignedIn) return;
+        localStorage.removeItem('buzz_active_report_html');
+        if (!supabaseAccessToken) return;
 
-        const savedReportHtml = localStorage.getItem('buzz_active_report_html') || '';
         const savedScanId = localStorage.getItem('buzz_active_scan_id') || '';
         const savedStep = parseInt(localStorage.getItem('buzz_wizard_step') || '1', 10);
 
-        const reportContainer = document.getElementById('report-container');
-        if (reportContainer && savedReportHtml.trim() && !reportContainer.innerHTML.trim()) {
-          reportContainer.innerHTML = savedReportHtml;
-          if (window.htmx) {
-            window.htmx.process(reportContainer);
-          }
-        }
-
+        // Saved reports are always fetched with current auth; browser hints cannot
+        // restore a review, acknowledgement, publication outcome, or action authority.
         // Restore the view once per page load. This also runs on every Supabase SIGNED_IN /
         // TOKEN_REFRESHED event (fired when the tab regains focus) and must not navigate then.
         if (initialViewRestored) return;
@@ -2585,7 +2851,7 @@
         if (pendingJob && !isAnalysisActive()) {
           resumePendingAnalysis(pendingJob);
         } else if (!hadOAuthCallbackOnBoot) {
-          if (savedStep === 4 && (savedReportHtml.trim() || savedScanId)) {
+          if (savedStep === 4 && savedScanId) {
             window.buzzGoToStep(4, true);
             if (savedScanId) {
               window.buzzLoadSavedScan(savedScanId);
@@ -2606,13 +2872,6 @@
             window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
           }
         }
-        if (githubProviderToken && !githubUserHandle) {
-          verifyGitHubProfileFromToken();
-        }
-        if (githubUserHandle || githubProviderToken || supabaseUserId) {
-          window.buzzRefreshRepos();
-          window.buzzRefreshSavedAudits();
-        }
         try {
           if (!supabaseClient && window.supabase) {
             supabaseClient = window.supabase.createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY);
@@ -2628,10 +2887,10 @@
             }
 
             supabaseClient.auth.onAuthStateChange(function (event, session) {
-              if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') && session) {
+              if (session) {
                 applySupabaseSession(session);
                 consumeOAuthLanding();
-              } else if (event === 'SIGNED_OUT') {
+              } else if (event === 'SIGNED_OUT' || event === 'INITIAL_SESSION') {
                 clearSavedAuth();
                 updateAuthBadge();
               }
@@ -2641,6 +2900,9 @@
             if (data && data.session) {
               applySupabaseSession(data.session);
               consumeOAuthLanding();
+            } else {
+              clearSavedAuth();
+              updateAuthBadge();
             }
           }
         } catch (_) {}
@@ -2669,6 +2931,8 @@
       };
 
       window.buzzSignOutGitHub = async function () {
+        clearSavedAuth();
+        updateAuthBadge();
         if (supabaseClient) {
           try {
             await supabaseClient.auth.signOut();
@@ -2679,6 +2943,8 @@
       };
 
       window.buzzSelectRepo = function (repoFullName) {
+        invalidateRefactorState();
+        savedScanLoadId += 1;
         const input = document.getElementById('repo-input');
         if (input) {
           input.value = repoFullName;

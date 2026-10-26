@@ -278,7 +278,7 @@ pub async fn analyze_refactoring(
 
 pub fn render_suggestions(report: &AuditReport) -> String {
     let result = &report.refactoring;
-    let mut html = String::from("<section class=\"refactoring-section\" aria-labelledby=\"refactoring-heading\"><h2 id=\"refactoring-heading\">Refactoring Suggestions</h2><p>From this audit's inspected source. One suggestion, one file, one pull request. These do not affect the security score.</p>");
+    let mut html = String::from("<section class=\"refactoring-section\" aria-labelledby=\"refactoring-heading\"><h2 id=\"refactoring-heading\">Refactoring Suggestions</h2><p>Apply opens a draft PR, using your fork if needed. Review the changes on GitHub; nothing is merged automatically.</p>");
     let message = match result.status {
         RefactoringStatus::NotRun => {
             "This saved audit predates refactoring analysis. Run a fresh audit to get suggestions."
@@ -302,21 +302,89 @@ pub fn render_suggestions(report: &AuditReport) -> String {
             html.push_str(&format!("<button type=\"button\" class=\"pixel-btn\" data-repo=\"{}\" onclick=\"window.buzzReauditRepo(this.dataset.repo)\">Run a fresh audit</button>", escape_html(&report.repo_full_name)));
         }
     }
-    for (rank, suggestion) in result.suggestions.iter().take(3).enumerate() {
-        let action = if report.scan_id.is_some() && report.source_verified {
-            "<button type=\"button\" class=\"pixel-btn pixel-btn-primary\" onclick=\"window.buzzPrepareRefactor(this)\">Generate patch</button>"
+    for suggestion in result.suggestions.iter().take(3) {
+        let outcome = report
+            .refactoring_outcomes
+            .get(&suggestion.id)
+            .map(String::as_str)
+            .unwrap_or("");
+        let published = outcome.contains("data-published=\"true\"");
+        let action = if published {
+            outcome
+        } else if report.scan_id.is_some() && report.source_verified {
+            "<button type=\"button\" class=\"pixel-btn pixel-btn-apply\" onclick=\"return window.buzzApplyRefactor(this, event);\">&#9889; APPLY &amp; OPEN PR</button>"
         } else {
-            "<p role=\"status\">A saved, verified audit is required to prepare a patch. Run a fresh audit after saving is available.</p>"
+            "<span class=\"pr-status-tag warn\">Run a fresh saved audit to apply.</span>"
         };
         html.push_str(&format!(
-            "<article class=\"pixel-box refactor-card\" data-scan-id=\"{}\" data-suggestion-id=\"{}\"><h3>{}. {}</h3><p class=\"refactor-file\">{} · {}</p><dl><dt>Problem</dt><dd>{}</dd><dt>Proposed change</dt><dd>{}</dd><dt>Expected benefit</dt><dd>{}</dd><dt>Behavior-preservation intent</dt><dd>{}</dd></dl>{}<div class=\"refactor-result\" aria-live=\"polite\">{}</div></article>",
-            escape_html(report.scan_id.as_deref().unwrap_or("")), escape_html(&suggestion.id), rank + 1,
+            "<article class=\"finding-card refactor-card\" data-scan-id=\"{}\" data-suggestion-id=\"{}\"><h3 class=\"finding-title\">{}</h3><div class=\"finding-location\"><span>FILE: {}</span><span>//</span><span>LINE: {}</span></div><p class=\"finding-explanation\">{}</p><div class=\"remediation-box\"><div class=\"remediation-header-row\"><span class=\"remediation-label\">&#9889; GEMINI 4 ARGON REFACTORING</span><div class=\"refactor-action\">{}</div></div><p class=\"remediation-code\">{}</p></div><div class=\"refactor-result\" aria-live=\"polite\">{}</div></article>",
+            escape_html(report.scan_id.as_deref().unwrap_or("")), escape_html(&suggestion.id),
             escape_html(&suggestion.title), escape_html(&suggestion.file_path), escape_html(&suggestion.line_reference),
-            escape_html(&suggestion.problem), escape_html(&suggestion.proposed_change), escape_html(&suggestion.benefit),
-            escape_html(&suggestion.behavior_preservation), action,
-            report.refactoring_outcomes.get(&suggestion.id).map(String::as_str).unwrap_or("")
+            escape_html(&suggestion.problem), action, escape_html(&suggestion.proposed_change),
+            if published { "" } else { outcome }
         ));
     }
     html.push_str("</section>");
     html
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report() -> AuditReport {
+        serde_json::from_value(serde_json::json!({
+            "scan_id": "scan-id", "repo_full_name": "example/app", "default_branch": "main",
+            "commit_sha": "a".repeat(40), "model_used": "fixture", "risk_score": 0, "grade": "A",
+            "executive_summary": "fixture", "files_inspected": 1, "total_tree_files": 1,
+            "total_bytes_loaded": 100, "estimated_tokens": 25, "raw_tokens_before_compact": 25,
+            "auto_compacted": false, "compaction_saved_tokens": 0, "inspected_file_paths": [],
+            "cves_checked": 0, "source_origin": "fixture", "findings": [], "source_verified": true,
+            "refactoring": {"status": "completed", "suggestions": [{
+                "id": "suggestion-id", "title": "Simplify <helper>", "file_path": "src/app.rs",
+                "line_reference": "L10-L20", "problem": "Duplicated checks.",
+                "proposed_change": "Combine the two checks.", "benefit": "Less duplication.",
+                "behavior_preservation": "Preserve both conditions."
+            }]}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn suggestion_uses_cve_card_classes_and_one_apply_action() {
+        let html = render_suggestions(&report());
+        for class in [
+            "finding-card refactor-card",
+            "finding-title",
+            "finding-location",
+            "finding-explanation",
+            "remediation-box",
+            "remediation-header-row",
+            "remediation-code",
+        ] {
+            assert!(html.contains(class));
+        }
+        assert_eq!(html.matches("<button").count(), 1);
+        assert!(html.contains("APPLY &amp; OPEN PR"));
+        assert!(html.contains("buzzApplyRefactor(this, event)"));
+        assert!(html.contains("Simplify &lt;helper&gt;"));
+        assert!(!html.contains("<dl>"));
+        assert!(!html.contains("Generate patch"));
+        assert!(!html.contains("refactor-ready"));
+    }
+
+    #[test]
+    fn saved_pr_replaces_apply_and_unverified_audits_cannot_apply() {
+        let mut report = report();
+        report.refactoring_outcomes.insert(
+            "suggestion-id".into(),
+            "<div data-published=\"true\">Confirmed PR link</div>".into(),
+        );
+        let html = render_suggestions(&report);
+        assert!(!html.contains("buzzApplyRefactor"));
+        assert_eq!(html.matches("Confirmed PR link").count(), 1);
+        report.refactoring_outcomes.clear();
+        report.source_verified = false;
+        assert!(!render_suggestions(&report).contains("buzzApplyRefactor"));
+    }
 }

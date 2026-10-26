@@ -1035,17 +1035,6 @@
 
   </main>
 
-  <dialog id="refactor-confirm-dialog" class="refactor-confirm-dialog" aria-labelledby="refactor-confirm-title" aria-describedby="refactor-confirm-intro">
-    <h2 id="refactor-confirm-title" tabindex="-1">Confirm refactoring PR</h2>
-    <p id="refactor-confirm-intro">Review the same prepared patch and destination below. Publishing uses these exact bytes without regenerating code. Cancel makes no GitHub changes.</p>
-    <p class="refactor-warning">Tests have not run. Behavior preservation is intended, not verified.</p>
-    <div id="refactor-confirm-preview"></div>
-    <div class="refactor-dialog-actions">
-      <button id="refactor-confirm-cancel" type="button" class="pixel-btn pixel-btn-sm">Cancel, keep review</button>
-      <button id="refactor-confirm-publish" type="button" class="pixel-btn pixel-btn-primary pixel-btn-sm">Publish and open PR</button>
-    </div>
-  </dialog>
-
   <!-- ==================================================================== -->
   <!-- PIXEL RAIN + 4-STEP WIZARD + REAL TOKEN 1M CONTEXT LOADER            -->
   <!-- ==================================================================== -->
@@ -2430,29 +2419,30 @@
         }
       });
 
-      // Refactoring is an explicit prepare -> review -> confirm flow, separate from security patches.
+      // Same one-click UX as CVEs; saved patch preparation stays behind the scenes.
       let refactorRevision = 0;
-      let activeRefactorReview = null;
       const refactorRequests = new Map();
-      const preparedRefactorReviews = new WeakSet();
-      const refactorDialog = document.getElementById('refactor-confirm-dialog');
-      const refactorPreview = document.getElementById('refactor-confirm-preview');
-      const refactorPublishButton = document.getElementById('refactor-confirm-publish');
+      let preparedRefactors = new WeakMap();
 
-      function closeRefactorDialog(restoreFocus) {
-        const review = activeRefactorReview;
-        activeRefactorReview = null;
-        if (refactorDialog.open) refactorDialog.close();
-        refactorPreview.replaceChildren();
-        if (restoreFocus && review && review.trigger.isConnected) review.trigger.focus();
+      function refactorDiffUrl(outcome, repo) {
+        const link = outcome.querySelector('[data-published="true"] [data-refactor-diff-link]');
+        if (!link) return null;
+        try {
+          const url = new URL(link.href);
+          const parts = url.pathname.split('/');
+          if (url.origin !== 'https://github.com' || url.username || url.password || url.search || url.hash ||
+              parts.length !== 6 || parts[3] !== 'pull' || parts[5] !== 'files' ||
+              !/^[1-9][0-9]*$/.test(parts[4]) ||
+              (parts[1] + '/' + parts[2]).toLowerCase() !== repo.toLowerCase()) return null;
+          return url.href;
+        } catch (_) { return null; }
       }
 
       function invalidateRefactorState() {
         refactorRevision += 1;
-        closeRefactorDialog(false);
-        refactorRequests.forEach(function (request, card) {
+        preparedRefactors = new WeakMap();
+        refactorRequests.forEach(function (request) {
           request.controller.abort();
-          setRefactorBusy(card, false, request.controls);
         });
         refactorRequests.clear();
         document.querySelectorAll('#report-container .refactor-result').forEach(function (result) {
@@ -2472,31 +2462,18 @@
           card: card, header: header, scanId: card.dataset.scanId,
           suggestionId: card.dataset.suggestionId, repo: header.dataset.repo,
           revision: refactorRevision, auth: authRevision,
-          result: card.querySelector('.refactor-result')
+          result: card.querySelector('.refactor-result'), action: card.querySelector('.refactor-action')
         };
       }
 
       function isCurrentRefactor(context) {
-        return context && context.result && context.card.isConnected && context.header.isConnected &&
+        return context && context.result && context.action && context.card.isConnected && context.header.isConnected &&
           context.revision === refactorRevision && context.auth === authRevision &&
           context.card.dataset.scanId === context.scanId && context.card.dataset.suggestionId === context.suggestionId &&
           context.header.dataset.scanId === context.scanId && context.header.dataset.repo === context.repo &&
           context.card.querySelector('.refactor-result') === context.result &&
+          context.card.querySelector('.refactor-action') === context.action &&
           context.card.closest('#tab-content-code-analysis') !== null;
-      }
-
-      function setRefactorBusy(card, busy, controls) {
-        card.setAttribute('aria-busy', String(busy));
-        if (busy) {
-          controls = Array.from(card.querySelectorAll('button, input')).map(function (control) {
-            const state = { control: control, disabled: control.disabled };
-            control.disabled = true;
-            return state;
-          });
-        } else {
-          (controls || []).forEach(function (state) { state.control.disabled = state.disabled; });
-        }
-        return controls;
       }
 
       function refactorMessage(result, message, isError) {
@@ -2508,182 +2485,90 @@
         return notice;
       }
 
-      async function requestRefactor(context, endpoint, params, publishing) {
-        if (!isCurrentRefactor(context) || refactorRequests.has(context.card)) return;
+      window.buzzApplyRefactor = async function (btn, evt) {
+        if (evt) { evt.preventDefault(); evt.stopPropagation(); }
+        const context = refactorContext(btn);
+        if (!isCurrentRefactor(context) || !context.suggestionId || btn.disabled || codingOverlayActive) return false;
         const headers = getAuthHeaders();
+        context.result.replaceChildren();
         if (!headers.Authorization || !headers['X-GitHub-Token']) {
-          refactorMessage(context.result, 'Connect GitHub with an active sign-in session before preparing or publishing a patch.', true);
-          return;
+          refactorMessage(context.result, 'Connect GitHub to apply this change.', true);
+          return false;
         }
-        context.result.setAttribute('aria-live', 'polite');
-        const request = { context: context, controller: new AbortController(), controls: setRefactorBusy(context.card, true) };
+        const request = { context: context, controller: new AbortController() };
         refactorRequests.set(context.card, request);
-        context.result.querySelectorAll(':scope > .refactor-status, :scope > .refactor-outcome').forEach(function (el) {
-          if (!el.querySelector('.refactor-review')) el.remove();
-        });
-        const status = refactorMessage(context.result, publishing
-          ? 'Publishing the reviewed patch. Waiting for the server to confirm the GitHub outcome...'
-          : 'Preparing an exact single-file patch. No GitHub changes are being made.', false);
-        headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
-        try {
+        btn.disabled = true;
+        context.card.setAttribute('aria-busy', 'true');
+        showCodingOverlay('Generating refactoring patch...');
+        let publishing = false;
+        const post = async function (endpoint, fields) {
           const res = await fetch(endpoint, {
-            method: 'POST', headers: headers, body: params.toString(), signal: request.controller.signal
+            method: 'POST', headers: Object.assign({}, headers, { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }),
+            body: new URLSearchParams(fields).toString(), signal: request.controller.signal
           });
           const html = await res.text();
-          if (!isCurrentRefactor(context)) return;
-          status.remove();
-          if (html.trim()) {
-            // Error/partial outcomes remain visible even on a non-200 response. Keep the
-            // reviewed artifact on failure so a retry publishes it, never regenerates it.
-            if (res.ok && !publishing) context.result.replaceChildren();
-            const outcome = document.createElement('div');
-            outcome.className = 'refactor-outcome';
-            outcome.innerHTML = html;
-            context.result.appendChild(outcome);
-            if (window.htmx) window.htmx.process(outcome);
-            outcome.querySelectorAll('.refactor-diff').forEach(function (diff) {
-              diff.tabIndex = 0;
-              diff.setAttribute('aria-label', 'Exact prepared patch diff');
-            });
-            outcome.querySelectorAll('.refactor-ack').forEach(function (ack) { ack.checked = false; });
-            if (outcome.querySelector('[data-published="true"]')) {
-              context.result.querySelectorAll('.refactor-review').forEach(function (review) { review.remove(); });
-              request.controls.forEach(function (state) { state.disabled = true; });
-            }
-            if (!publishing && !outcome.querySelector('[data-published="true"]')) {
-              let prepared = false;
-              outcome.querySelectorAll('.refactor-review').forEach(function (review) {
-                const diff = review.querySelector('.refactor-diff');
-                const ack = review.querySelector('.refactor-ack');
-                if (res.ok && review.dataset.patchId && review.dataset.digest && diff && diff.textContent.trim() && ack) {
-                  preparedRefactorReviews.add(review);
-                  prepared = true;
-                  diff.focus({ preventScroll: true });
-                } else {
-                  review.querySelectorAll('button, input').forEach(function (control) { control.disabled = true; });
-                }
-              });
-              if (res.ok && !prepared) refactorMessage(context.result, 'No complete patch preview was returned. Please retry generating the patch.', true);
-            }
-          } else {
-            refactorMessage(context.result, publishing
-              ? 'No publication outcome was returned. Reload the saved audit to check the server status before retrying this reviewed patch.'
-              : 'No patch was returned. You can retry generating the patch.', true);
-          }
-        } catch (error) {
-          if (!isCurrentRefactor(context) || error.name === 'AbortError') return;
-          status.remove();
-          refactorMessage(context.result, publishing
-            ? 'The publication outcome is unknown because the connection failed. Reload the saved audit to check status, or retry this same reviewed patch; do not generate another patch.'
-            : 'Could not prepare the patch. No publication was requested. Please retry.', true);
-        } finally {
-          if (refactorRequests.get(context.card) === request) {
-            refactorRequests.delete(context.card);
-            setRefactorBusy(context.card, false, request.controls);
-          }
-        }
-      }
-
-      window.buzzPrepareRefactor = function (btn) {
-        const context = refactorContext(btn);
-        if (!isCurrentRefactor(context) || !context.suggestionId || refactorRequests.has(context.card)) return false;
-        // A cancelled review is reusable; generating again must not silently replace it.
-        const review = context.result.querySelector('.refactor-review');
-        if (review && preparedRefactorReviews.has(review)) {
-          review.scrollIntoView({ block: 'nearest' });
-          const ack = review.querySelector('.refactor-ack');
-          if (ack) ack.focus();
-          return false;
-        }
-        const params = new URLSearchParams({ scan_id: context.scanId, suggestion_id: context.suggestionId });
-        requestRefactor(context, '/api/prepare_refactor', params, false);
-        return false;
-      };
-
-      window.buzzConfirmRefactor = function (btn) {
-        const context = refactorContext(btn);
-        const review = btn && btn.closest('.refactor-review');
-        if (!isCurrentRefactor(context) || !review || !preparedRefactorReviews.has(review) ||
-            refactorRequests.has(context.card) || activeRefactorReview) return false;
-        const ack = review.querySelector('.refactor-ack');
-        context.result.querySelectorAll('[data-refactor-ack-error]').forEach(function (notice) { notice.remove(); });
-        if (!ack || ack.disabled || !ack.checked) {
-          refactorMessage(context.result, 'Acknowledge that you have reviewed this patch and its destination before continuing.', true)
-            .setAttribute('data-refactor-ack-error', 'true');
-          if (ack) ack.focus();
-          return false;
-        }
-        const diff = review.querySelector('.refactor-diff');
-        if (!review.dataset.patchId || !review.dataset.digest || !diff || !diff.textContent.trim()) {
-          refactorMessage(context.result, 'This preview is incomplete. Reload the saved audit before preparing a new patch.', true);
-          return false;
-        }
-        // Clone the server-rendered review verbatim: never reconstruct metadata or diff bytes.
-        const preview = review.cloneNode(true);
-        preview.removeAttribute('aria-busy');
-        preview.querySelectorAll('.refactor-ack').forEach(function (input) {
-          const label = input.closest('label');
-          (label || input).remove();
-        });
-        preview.querySelectorAll('button, input, script').forEach(function (el) { el.remove(); });
-        [preview].concat(Array.from(preview.querySelectorAll('*'))).forEach(function (el) {
-          Array.from(el.attributes).forEach(function (attr) {
-            if (attr.name === 'id' || attr.name.startsWith('on') || attr.name.startsWith('hx-')) el.removeAttribute(attr.name);
-          });
-        });
-        refactorPreview.replaceChildren(preview);
-        activeRefactorReview = {
-          context: context, review: review, trigger: btn,
-          patchId: review.dataset.patchId, digest: review.dataset.digest
+          if (!isCurrentRefactor(context) || request.controller.signal.aborted) throw new DOMException('Report changed', 'AbortError');
+          const fragment = document.createElement('div');
+          fragment.innerHTML = html;
+          if (!res.ok) throw new Error(fragment.textContent.trim() || 'Could not apply this change. Please retry.');
+          return fragment;
         };
-        refactorPublishButton.disabled = false;
-        refactorDialog.showModal();
-        document.getElementById('refactor-confirm-title').focus();
+        try {
+          let prepared = preparedRefactors.get(context.card);
+          if (prepared && (prepared.scanId !== context.scanId || prepared.suggestionId !== context.suggestionId)) prepared = null;
+          let outcome;
+          if (!prepared) {
+            outcome = await post('/api/prepare_refactor', { scan_id: context.scanId, suggestion_id: context.suggestionId });
+            if (!refactorDiffUrl(outcome, context.repo)) {
+              const patch = outcome.querySelector('[data-refactor-patch]');
+              if (!patch || !patch.dataset.patchId || !patch.dataset.digest) throw new Error('No patch was returned. Please retry.');
+              prepared = { patchId: patch.dataset.patchId, digest: patch.dataset.digest, scanId: context.scanId, suggestionId: context.suggestionId };
+              preparedRefactors.set(context.card, prepared);
+            }
+          }
+          if (prepared) {
+            publishing = true;
+            document.getElementById('patch-coding-step-text').textContent = 'Creating draft pull request on GitHub...';
+            outcome = await post('/api/publish_refactor', { patch_id: prepared.patchId, digest: prepared.digest, confirmed: 'true' });
+          }
+          const diffUrl = refactorDiffUrl(outcome, context.repo);
+          if (!diffUrl) throw new Error('PR status could not be confirmed. Retry to check the same change.');
+          context.action.replaceChildren(...outcome.childNodes);
+          preparedRefactors.delete(context.card);
+          persistActiveReportState();
+          // Same-tab navigation avoids blank holding tabs and popup blockers.
+          window.location.assign(diffUrl);
+        } catch (error) {
+          if (isCurrentRefactor(context) && error.name !== 'AbortError') {
+            refactorMessage(context.result, error instanceof TypeError
+              ? (publishing ? 'Connection lost. Retry to check the same PR; nothing is merged automatically.' : 'Could not generate the patch. Please retry.')
+              : error.message, true);
+          }
+        } finally {
+          if (refactorRequests.get(context.card) === request) refactorRequests.delete(context.card);
+          context.card.setAttribute('aria-busy', 'false');
+          btn.disabled = false;
+          hideCodingOverlay();
+        }
         return false;
       };
-
-      document.getElementById('refactor-confirm-cancel').addEventListener('click', function () {
-        closeRefactorDialog(true);
-      });
-      refactorDialog.addEventListener('cancel', function (event) {
-        event.preventDefault();
-        closeRefactorDialog(true);
-      });
-      refactorPublishButton.addEventListener('click', function () {
-        const active = activeRefactorReview;
-        if (!active) return;
-        const ack = active.review.querySelector('.refactor-ack');
-        if (!isCurrentRefactor(active.context) || !active.review.isConnected || !ack || !ack.checked ||
-            active.review.dataset.patchId !== active.patchId || active.review.dataset.digest !== active.digest) {
-          closeRefactorDialog(true);
-          return;
-        }
-        refactorPublishButton.disabled = true;
-        const params = new URLSearchParams({ patch_id: active.patchId, digest: active.digest, confirmed: 'true' });
-        closeRefactorDialog(true);
-        requestRefactor(active.context, '/api/publish_refactor', params, true);
-      });
 
       // A report swap can detach a card without going through a navigation handler.
       new MutationObserver(function () {
-        if (activeRefactorReview && (!isCurrentRefactor(activeRefactorReview.context) ||
-            !activeRefactorReview.review.isConnected ||
-            activeRefactorReview.review.dataset.patchId !== activeRefactorReview.patchId ||
-            activeRefactorReview.review.dataset.digest !== activeRefactorReview.digest)) closeRefactorDialog(false);
         refactorRequests.forEach(function (request, card) {
           if (!isCurrentRefactor(request.context)) {
             request.controller.abort();
-            setRefactorBusy(card, false, request.controls);
             refactorRequests.delete(card);
           }
         });
       }).observe(document.getElementById('report-container'), {
         childList: true, subtree: true, attributes: true,
-        attributeFilter: ['data-scan-id', 'data-suggestion-id', 'data-repo', 'data-patch-id', 'data-digest']
+        attributeFilter: ['data-scan-id', 'data-suggestion-id', 'data-repo']
       });
 
       // 6. Bouncing Lightning Bolt Coding on a Laptop Overlay & Direct Apply Patch Handler
       let codingOverlayTimer = null;
+      let codingOverlayActive = false;
       const CODING_STEPS = [
         'Synthesizing surgical patch with Gemini 4 Argon...',
         'Initializing remediation branch on GitHub...',
@@ -2691,13 +2576,16 @@
         'Opening GitHub Pull Request with security diff...'
       ];
 
-      function showCodingOverlay() {
+      function showCodingOverlay(message) {
+        codingOverlayActive = true;
         const overlay = document.getElementById('patch-coding-overlay');
         const stepText = document.getElementById('patch-coding-step-text');
         if (overlay) overlay.classList.add('active');
-        if (stepText) stepText.textContent = CODING_STEPS[0];
+        if (stepText) stepText.textContent = message || CODING_STEPS[0];
 
         if (codingOverlayTimer) clearInterval(codingOverlayTimer);
+        // Refactoring supplies real stage updates rather than cycling simulated steps.
+        if (message) return;
         let sIdx = 1;
         codingOverlayTimer = setInterval(function () {
           if (stepText) {
@@ -2708,21 +2596,20 @@
       }
 
       function hideCodingOverlay() {
+        codingOverlayActive = false;
         if (codingOverlayTimer) {
           clearInterval(codingOverlayTimer);
           codingOverlayTimer = null;
         }
-        setTimeout(function () {
-          const overlay = document.getElementById('patch-coding-overlay');
-          if (overlay) overlay.classList.remove('active');
-        }, 450);
+        const overlay = document.getElementById('patch-coding-overlay');
+        if (overlay) overlay.classList.remove('active');
       }
 
       window.buzzApplyPatch = async function (btnEl, evt) {
         if (evt && evt.preventDefault) evt.preventDefault();
         if (evt && evt.stopPropagation) evt.stopPropagation();
 
-        if (btnEl && btnEl.closest('.refactor-card, .refactor-review')) return false;
+        if (!btnEl || btnEl.disabled || codingOverlayActive || btnEl.closest('.refactor-card')) return false;
         const form = btnEl ? btnEl.closest('form') : null;
         if (!form) return false;
 

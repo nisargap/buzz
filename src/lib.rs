@@ -10,6 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const MAX_1M_CONTEXT_CHARS: usize = 2_400_000;
 const MAX_SINGLE_FILE_BYTES: usize = 180_000;
 const MAX_FILES_TO_FETCH: usize = 250;
+/// Fixed sampling seed (with temperature 0) so audits and diagrams of the same input repeat as closely as Gemini allows.
+const GEMINI_SEED: u32 = 1337;
 
 // ============================================================================
 // 1. CONFIGURATION
@@ -284,7 +286,7 @@ pub async fn fetch_cves(
 ) -> Vec<CveRecord> {
     if let (Some(base_url), Some(api_key)) = (&config.supabase_url, config.supabase_api_key()) {
         let mut endpoint = format!(
-            "{}/rest/v1/cves?select=*&order=cvss_score.desc",
+            "{}/rest/v1/cves?select=*&order=cvss_score.desc,id.asc",
             base_url.trim_end_matches('/')
         );
         if let Some(eco) = ecosystem_filter {
@@ -1049,7 +1051,8 @@ async fn call_gemini_argon_api(
             "parts": [{ "text": prompt }]
         }],
         "generationConfig": {
-            "temperature": 0.1,
+            "temperature": 0.0,
+            "seed": GEMINI_SEED,
             "responseMimeType": "application/json"
         }
     });
@@ -1416,7 +1419,8 @@ async fn call_gemini_diagram_api(
     let payload = serde_json::json!({
         "contents": [{ "parts": [{ "text": prompt }] }],
         "generationConfig": {
-            "temperature": 0.1,
+            "temperature": 0.0,
+            "seed": GEMINI_SEED,
             "responseMimeType": "application/json"
         }
     });
